@@ -1,0 +1,8 @@
+name: agent-heartbeat
+version: 1.0.0
+description: "Persistent heartbeat in the current gateway session — periodic wakeups with shared context. Agent wakes up periodically in the SAME conversation, preserving full context for discussion."
+author: "Hermes Agent Contributors"
+license: MIT
+kind: standalone
+provides_hooks:
+  - pre_gateway_dispatch
