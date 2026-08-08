@@ -1,12 +1,14 @@
-"""Tests for the agent-heartbeat plugin."""
+"""Tests for the agent-heartbeat plugin (multi-session version)."""
 
 import importlib.util
+import json
+import os
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 
 def _load_plugin() -> object:
-    """Load the plugin module from the source directory."""
     plugin_dir = Path(__file__).resolve().parent.parent
     spec = importlib.util.spec_from_file_location(
         "agent_heartbeat", plugin_dir / "__init__.py"
@@ -17,8 +19,6 @@ def _load_plugin() -> object:
 
 
 class TestPluginImports:
-    """Verify the plugin module loads without errors."""
-
     def test_import_ok(self):
         mod = _load_plugin()
         assert mod is not None
@@ -35,6 +35,43 @@ class TestPluginImports:
         assert mod._DEFAULT_INTERVAL == 900.0
 
 
+class TestSessionKey:
+    def test_telegram_dm(self):
+        mod = _load_plugin()
+
+        class FakeSource:
+            platform = mod.Platform.TELEGRAM
+            chat_id = "6211819157"
+            thread_id = None
+
+        assert mod._session_key(FakeSource()) == "telegram:6211819157:"
+
+    def test_telegram_topic(self):
+        mod = _load_plugin()
+
+        class FakeSource:
+            platform = mod.Platform.TELEGRAM
+            chat_id = "-100123"
+            thread_id = "17585"
+
+        assert mod._session_key(FakeSource()) == "telegram:-100123:17585"
+
+
+class TestSessionsPersistence:
+    def test_save_and_load(self, tmp_path):
+        mod = _load_plugin()
+        test_file = tmp_path / "sessions.json"
+        with patch.object(mod, "_SESSIONS_FILE", test_file):
+            data = {"telegram:123:": {"enabled": True, "interval": 600}}
+            mod._save_sessions(data)
+            loaded = mod._load_sessions()
+            assert loaded == data
+
+    def test_load_missing_file(self):
+        mod = _load_plugin()
+        assert mod._load_sessions() == {}
+
+
 class TestInterval:
     def test_default_interval(self):
         mod = _load_plugin()
@@ -42,15 +79,15 @@ class TestInterval:
 
     def test_custom_interval(self):
         mod = _load_plugin()
-        assert mod._interval({"interval_seconds": 1800}) == 1800.0
+        assert mod._interval({"interval": 1800}) == 1800.0
 
     def test_clamped_min(self):
         mod = _load_plugin()
-        assert mod._interval({"interval_seconds": 5}) == 60.0
+        assert mod._interval({"interval": 5}) == 60.0
 
     def test_clamped_max(self):
         mod = _load_plugin()
-        assert mod._interval({"interval_seconds": 99999}) == 86400.0
+        assert mod._interval({"interval": 99999}) == 86400.0
 
 
 class TestActiveWindow:
@@ -64,7 +101,7 @@ class TestActiveWindow:
 
     def test_invalid_window_defaults_true(self):
         mod = _load_plugin()
-        assert mod._in_active_window({"active_start": "not-a-time", "active_end": "not-a-time"}) is True
+        assert mod._in_active_window({"active_start": "bad", "active_end": "bad"}) is True
 
 
 class TestIdlePause:
@@ -76,7 +113,7 @@ class TestIdlePause:
         mod = _load_plugin()
         assert mod._check_idle_pause({"idle_auto_pause_enabled": False}, "test:key") is False
 
-    def test_no_interaction_recorded(self):
+    def test_no_interaction(self):
         mod = _load_plugin()
         assert mod._check_idle_pause({"idle_auto_pause_enabled": True}, "test:none") is False
 
@@ -91,15 +128,43 @@ class TestPrompt:
         mod = _load_plugin()
         assert mod._prompt({}) == ""
 
-    def test_missing_file(self):
+
+class TestFormatSource:
+    def test_dm(self):
         mod = _load_plugin()
-        result = mod._prompt({"prompt_file": "/tmp/nonexistent-heartbeat-prompt.md"})
-        assert result == ""  # Falls back to inline prompt, which is empty
+        assert mod._format_source("telegram:6211819157:") == "telegram/6211819157/DM"
+
+    def test_thread(self):
+        mod = _load_plugin()
+        assert mod._format_source("telegram:-100123:17585") == "telegram/-100123/17585"
+
+
+class TestCmdHeartbeat:
+    def test_no_subcommand_no_active(self):
+        mod = _load_plugin()
+        result = mod._cmd_heartbeat("")
+        assert "set" in result
+
+    def test_list_empty(self):
+        mod = _load_plugin()
+        result = mod._cmd_heartbeat("list")
+        assert "set" in result
+
+    def test_set_no_context(self):
+        mod = _load_plugin()
+        # Clear _last_source
+        mod._last_source = None
+        result = mod._cmd_heartbeat("set")
+        assert "context" in result
+
+    def test_unknown_subcommand(self):
+        mod = _load_plugin()
+        result = mod._cmd_heartbeat("foobar")
+        assert "Unknown" in result
 
 
 class TestRegister:
-    def test_register_called(self):
-        """Verify register() accepts a context-like object."""
+    def test_register_creates_hook_and_command(self):
         mod = _load_plugin()
 
         class FakeCtx:
@@ -118,6 +183,6 @@ class TestRegister:
 
         assert len(ctx.hooks) == 1
         assert ctx.hooks[0][0] == "pre_gateway_dispatch"
-
         assert len(ctx.commands) == 1
         assert ctx.commands[0][0] == "heartbeat"
+        assert "set" in ctx.commands[0][2]  # description mentions subcommands
