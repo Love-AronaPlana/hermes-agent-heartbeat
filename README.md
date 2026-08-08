@@ -15,8 +15,13 @@ It periodically wakes up the agent **in the same conversation**, preserving full
 
 | # | Feature | Default |
 |---|---------|---------|
+| ✅ | **Multi-session** — independent heartbeat per channel/thread | — |
 | ✅ | **Periodic wakeup** — configurable interval (60s – 24h) | `900s` |
-| 🆕 | **`/heartbeat`** — slash command to trigger an immediate wakeup | — |
+| 🆕 | **`/heartbeat set`** — enable heartbeat for the current conversation | — |
+| 🆕 | **`/heartbeat unset`** — disable heartbeat for the current conversation | — |
+| 🆕 | **`/heartbeat list`** — view all configured sessions and their status | — |
+| 🆕 | **`/heartbeat config [key] [value]`** — view/set per-session settings | — |
+| 🆕 | **`/heartbeat`** — trigger an immediate wakeup in the current session | — |
 | 🆕 | **Idle auto-pause** — skip heartbeats when you're away (opt-in) | `off` |
 | 🆕 | **Active time window** — only fire during business hours (opt-in) | `off` |
 | 🆕 | **UTC offset** — configure your timezone for the active window | `+8` |
@@ -63,54 +68,91 @@ hermes gateway restart
 
 ## Configuration
 
-All settings go under `agent_heartbeat:` in `~/.hermes/config.yaml`.
+Two layers of config:
+
+1. **Global settings** under `agent_heartbeat:` in `~/.hermes/config.yaml` — the master switch and defaults for new sessions.
+2. **Per-session settings** in `~/.hermes/heartbeat/sessions.json` — managed via `/heartbeat set` / `/heartbeat config` slash commands (no manual editing needed).
+
+### Global config (config.yaml)
 
 ```yaml
 agent_heartbeat:
-  # Required
+  # Required: master switch (must be true for any session to fire)
   enabled: true
-  platform: telegram
-  chat_id: "123456789"                    # Your Telegram chat ID
 
-  # Interval (60-86400 seconds)
-  interval_seconds: 900                   # 15 minutes
-
-  # Prompt source (file path or inline string)
-  prompt_file: ~/.hermes/heartbeat/HEARTBEAT.md
-  # prompt: "Inline prompt if no file"
-
-  # Optional: active time window (default: off)
-  active_start: "08:00"                   # Window start (local time)
-  active_end: "22:00"                     # Window end (cross-midnight OK)
-  utc_offset: "+8"                        # Your timezone offset
-
-  # Optional: idle auto-pause (default: off)
-  idle_auto_pause_enabled: true
-  idle_auto_pause_minutes: 120            # Pause after 2h of no messages
+  # Defaults applied when a new session is added via /heartbeat set
+  default_interval: 900                   # 60-86400 seconds
+  default_prompt_file: ~/.hermes/heartbeat/HEARTBEAT.md
 ```
+
+### Per-session config (via slash commands)
+
+```bash
+# In any conversation:
+/heartbeat set                    # Enable heartbeat for THIS conversation
+/heartbeat config                 # View current session settings
+/heartbeat config interval 1800   # Change this session's interval (seconds)
+/heartbeat config prompt_file ~/.hermes/heartbeat/HEARTBEAT.md
+/heartbeat config active_start 08:00
+/heartbeat config active_end 22:00
+/heartbeat config utc_offset +8
+/heartbeat config idle_auto_pause_enabled true
+/heartbeat config idle_auto_pause_minutes 120
+/heartbeat unset                  # Disable heartbeat for THIS conversation
+```
+
+Per-session settings are stored in `~/.hermes/heartbeat/sessions.json`:
+
+```json
+{
+  "telegram:123456789:": {
+    "enabled": true,
+    "interval": 900,
+    "prompt_file": "~/.hermes/heartbeat/HEARTBEAT.md",
+    "active_start": "",
+    "active_end": "",
+    "utc_offset": "+8",
+    "idle_auto_pause_enabled": false,
+    "idle_auto_pause_minutes": 120
+  }
+}
+```
+
+Session keys follow the format `platform:chat_id:thread_id` — e.g. `telegram:123456789:` for a DM, `telegram:-1001234567890:17585` for a topic thread.
 
 ### Quick config via CLI
 
 ```bash
+# Master switch
 hermes config set agent_heartbeat.enabled true
-hermes config set agent_heartbeat.interval_seconds 1800
-hermes config set agent_heartbeat.chat_id "123456789"
-hermes config set agent_heartbeat.platform telegram
-hermes config set agent_heartbeat.prompt_file "~/.hermes/heartbeat/HEARTBEAT.md"
-
-# Optional: active window
-hermes config set agent_heartbeat.active_start "08:00"
-hermes config set agent_heartbeat.active_end "02:00"
-hermes config set agent_heartbeat.utc_offset "+8"
-
-# Optional: idle pause
-hermes config set agent_heartbeat.idle_auto_pause_enabled true
-hermes config set agent_heartbeat.idle_auto_pause_minutes 120
+hermes config set agent_heartbeat.default_interval 1800
+hermes config set agent_heartbeat.default_prompt_file "~/.hermes/heartbeat/HEARTBEAT.md"
 ```
 
 ---
 
 ## Usage
+
+### Quick start
+
+```bash
+# 1. Enable the master switch (once)
+hermes config set agent_heartbeat.enabled true
+
+# 2. In the conversation where you want a heartbeat:
+/heartbeat set
+```
+
+### Slash commands
+
+| Command | What it does |
+|---------|--------------|
+| `/heartbeat` | Trigger an immediate wakeup in the current session |
+| `/heartbeat set` | Enable heartbeat for the **current** conversation |
+| `/heartbeat unset` | Disable heartbeat for the **current** conversation |
+| `/heartbeat list` | Show all configured sessions and their status |
+| `/heartbeat config` | View the current session's settings |
+| `/heartbeat config <key> <value>` | Change a setting (interval, prompt_file, active_start, active_end, utc_offset, idle_auto_pause_*) |
 
 ### The prompt file
 
@@ -142,11 +184,22 @@ When enabled, the heartbeat tracks your last message. If no messages arrive
 for `idle_auto_pause_minutes`, the heartbeat goes silent. The next message
 you send restores it automatically.
 
+```bash
+/heartbeat config idle_auto_pause_enabled true
+/heartbeat config idle_auto_pause_minutes 120
+```
+
 ### Active time window
 
 When configured, the heartbeat only fires between `active_start` and
 `active_end`. Cross-midnight windows work (e.g. 22:00-02:00). Configure
 `utc_offset` to match your local timezone.
+
+```bash
+/heartbeat config active_start 08:00
+/heartbeat config active_end 02:00
+/heartbeat config utc_offset +8
+```
 
 ---
 
