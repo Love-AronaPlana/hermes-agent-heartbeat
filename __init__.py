@@ -448,13 +448,30 @@ async def _run(gateway: Any, source: Any, key: str) -> None:
 # ── hooks ──────────────────────────────────────────────────────────────────────
 
 
-def _on_pre_gateway_dispatch(event: Any, gateway: Any, **_: Any) -> None:
-    """Bind heartbeat to matching sessions. Tracks user idle state."""
+def _on_pre_gateway_dispatch(event: Any, gateway: Any, **_: Any) -> dict | None:
+    """Intercept /hb and /heartbeat commands, then bind heartbeat to sessions."""
     global _last_source
 
     source = getattr(event, "source", None)
     if source is None:
         return
+
+    # ── Intercept /hb and /heartbeat commands BEFORE built-in dispatch ──
+    text = (getattr(event, "text", "") or "").strip()
+    if text.startswith("/hb") or text.startswith("/heartbeat"):
+        # Extract args after the command name
+        _, _, remainder = text.partition(" ")
+        remainder = remainder.strip()
+        response_text = _cmd_heartbeat(remainder)
+        if response_text:
+            # Send reply via adapter, then skip built-in dispatch
+            try:
+                adapter = _adapter_for_source(gateway, source)
+                if adapter:
+                    adapter.send(str(source.chat_id), response_text)
+            except Exception:
+                logger.warning("agent-heartbeat: failed to send command response", exc_info=True)
+            return {"action": "skip", "reason": "agent-heartbeat handled command"}
 
     _last_source = source
 
@@ -537,6 +554,29 @@ def _cmd_heartbeat(raw_args: str) -> str | None:
         return "❌ No active heartbeat for this session."
 
     subcmd = args.split()[0].lower()
+
+    # ── /heartbeat status — show current session heartbeat status ──
+    if subcmd == "status":
+        current_key = _get_current_key()
+        if current_key is None:
+            return "❌ No session context."
+        sessions = _load_sessions()
+        sc = sessions.get(current_key)
+        if sc is None or not sc.get("enabled", False):
+            return "No heartbeat configured for this session. Use `/hb set` to enable one."
+        task = _tasks.get(current_key)
+        is_active = task is not None and not task.done()
+        paused_until = str(sc.get("paused_until", "") or "").strip()
+        if paused_until:
+            pause_status = f"⏸️ Paused until {paused_until}"
+        elif is_active:
+            pause_status = "🟢 Active"
+        else:
+            pause_status = "⚪ Configured (waiting for message)"
+        return f"**Heartbeat Status** — {_format_source(current_key)}\n" \
+               f"  Status: {pause_status}\n" \
+               f"  Interval: {int(sc.get('interval', 900))}s\n" \
+               f"  Window: {sc.get('active_start', '') or 'all day'}–{sc.get('active_end', '') or 'all day'}"
 
     # ── /heartbeat list ────────────────────────────────────────────────────
     if subcmd == "list":
@@ -851,9 +891,7 @@ def _cmd_heartbeat(raw_args: str) -> str | None:
 def register(ctx) -> None:
     ctx.register_hook("pre_gateway_dispatch", _on_pre_gateway_dispatch)
     ctx.register_hook("on_session_end", _on_session_end)
-    ctx.register_command(
-        name="hb",
-        handler=_cmd_heartbeat,
-        description="Heartbeat: set, unset, list, config, stats, test, pause, resume. Use /hb (no args) for manual trigger.",
-        args_hint="[set|unset|list|config [key] [value]|stats|test|pause [duration]|resume]",
-    )
+    # Note: commands are intercepted via the pre_gateway_dispatch hook rather
+    # than register_command, because Hermes core has a built-in /heartbeat
+    # command that rejects plugin registration of the same name. The hook
+    # catches both /hb and /heartbeat prefixes before the built-in dispatch.
