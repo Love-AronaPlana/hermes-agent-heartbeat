@@ -4,8 +4,59 @@ import importlib.util
 import json
 import os
 import sys
+import types
+from enum import Enum
 from pathlib import Path
 from unittest.mock import patch
+
+# ── Hermes module stubs ────────────────────────────────────────────────────────
+# The plugin imports Hermes internals (hermes_cli / gateway) at module top.
+# These are NOT installable from PyPI, so in a clean CI environment we inject
+# minimal stubs BEFORE loading the plugin. When the real modules are available
+# (e.g. inside a Hermes venv), sys.modules already has them and setdefault
+# leaves them untouched.
+
+
+def _install_hermes_stubs() -> None:
+    """Inject minimal stubs for Hermes internals when they are not importable."""
+    if "hermes_cli" in sys.modules:
+        return  # real Hermes present — do not stub
+
+    # hermes_cli.config.load_config
+    hermes_cli = types.ModuleType("hermes_cli")
+    hermes_cli_config = types.ModuleType("hermes_cli.config")
+    hermes_cli_config.load_config = lambda: {}
+    hermes_cli.config = hermes_cli_config
+    sys.modules["hermes_cli"] = hermes_cli
+    sys.modules["hermes_cli.config"] = hermes_cli_config
+
+    # gateway.platforms.base.Platform
+    gateway = types.ModuleType("gateway")
+    gateway_platforms = types.ModuleType("gateway.platforms")
+    gateway_platforms_base = types.ModuleType("gateway.platforms.base")
+
+    class Platform(Enum):
+        TELEGRAM = "telegram"
+        DISCORD = "discord"
+
+    gateway_platforms_base.Platform = Platform
+    gateway.platforms = gateway_platforms
+    gateway_platforms.base = gateway_platforms_base
+    sys.modules["gateway"] = gateway
+    sys.modules["gateway.platforms"] = gateway_platforms
+    sys.modules["gateway.platforms.base"] = gateway_platforms_base
+
+    # gateway.wake.deliver_wake
+    gateway_wake = types.ModuleType("gateway.wake")
+
+    async def deliver_wake(*args, **kwargs):
+        return None
+
+    gateway_wake.deliver_wake = deliver_wake
+    sys.modules["gateway.wake"] = gateway_wake
+
+
+_install_hermes_stubs()
 
 
 def _load_plugin() -> object:
