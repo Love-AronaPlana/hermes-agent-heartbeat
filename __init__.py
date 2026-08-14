@@ -6,7 +6,7 @@ gateway session via ``deliver_wake``. The agent remembers the conversation,
 and the user can reply between wakeups — context is fully preserved.
 
 Supports multiple sessions (different channels/threads), each with its own
-config. Manage via ``/heartbeat set|unset|list|config|stats|test|pause|resume``
+config. Manage via ``/hb set|unset|list|config|stats|test|pause|resume``
 slash commands.
 
 License: MIT
@@ -522,13 +522,13 @@ def _cmd_heartbeat(raw_args: str) -> str | None:
     args = raw_args.strip()
 
     # ── /heartbeat (no subcommand) — manual trigger for CURRENT session ──
-    if not args or args.startswith("/heartbeat"):
+    if not args or args.startswith("/hb"):
         current_key = _get_current_key()
         if current_key is None:
             return "❌ No session context. Send a message first."
         task = _tasks.get(current_key)
         if task is None or task.done():
-            return "❌ No active heartbeat for this session. Use `/heartbeat set` first."
+            return "❌ No active heartbeat for this session. Use `/hb set` first."
         event = _triggers.get(current_key)
         if event is not None:
             event.set()
@@ -542,7 +542,7 @@ def _cmd_heartbeat(raw_args: str) -> str | None:
     if subcmd == "list":
         sessions = _load_sessions()
         if not sessions:
-            return "No sessions configured. Use `/heartbeat set` to add one."
+            return "No sessions configured. Use `/hb set` to add one."
 
         lines = []
         for key, sc in sorted(sessions.items()):
@@ -567,7 +567,7 @@ def _cmd_heartbeat(raw_args: str) -> str | None:
                 lines.append(f"         Window: {sc['active_start']}-{sc['active_end']} UTC{sc.get('utc_offset', '+8')}")
         return "**Heartbeat Sessions:**\n" + "\n".join(lines)
 
-    # ── /heartbeat set ─────────────────────────────────────────────────────
+    # ── /hb set ─────────────────────────────────────────────────────
     if subcmd == "set":
         key = _get_current_key()
         if key is None:
@@ -582,7 +582,7 @@ def _cmd_heartbeat(raw_args: str) -> str | None:
             sessions[key] = dict(defaults)
             sessions[key]["enabled"] = True
         _save_sessions(sessions)
-        logger.info("agent-heartbeat: enabled for %s via /heartbeat set", key)
+        logger.info("agent-heartbeat: enabled for %s via /hb set", key)
         return f"✅ Heartbeat enabled for {_format_source(key)}.\n   Interval: {int(sessions[key]['interval'])}s\n   Send a message to activate."
 
     # ── /heartbeat unset ───────────────────────────────────────────────────
@@ -606,7 +606,7 @@ def _cmd_heartbeat(raw_args: str) -> str | None:
             return "❌ No session context."
         sessions = _load_sessions()
         if key not in sessions:
-            return f"❌ Session {_format_source(key)} not configured. Use `/heartbeat set` first."
+            return f"❌ Session {_format_source(key)} not configured. Use `/hb set` first."
 
         # Parse optional duration (default: 1 hour)
         rest = args[len("pause"):].strip()
@@ -639,7 +639,7 @@ def _cmd_heartbeat(raw_args: str) -> str | None:
             return "❌ No session context."
         sessions = _load_sessions()
         if key not in sessions:
-            return f"❌ Session {_format_source(key)} not configured. Use `/heartbeat set` first."
+            return f"❌ Session {_format_source(key)} not configured. Use `/hb set` first."
         if "paused_until" not in sessions[key] or not sessions[key].get("paused_until"):
             return f"ℹ️ Heartbeat for {_format_source(key)} is not paused."
         sessions[key].pop("paused_until", None)
@@ -779,14 +779,14 @@ def _cmd_heartbeat(raw_args: str) -> str | None:
 
         return "\n".join(lines)
 
-    # ── /heartbeat config [key] [value] ────────────────────────────────────
+    # ── /hb config [key] [value] ────────────────────────────────────
     if subcmd == "config":
         key = _get_current_key()
         if key is None:
             return "❌ No session context."
         sessions = _load_sessions()
         if key not in sessions:
-            return f"❌ Session {_format_source(key)} not configured. Use `/heartbeat set` first."
+            return f"❌ Session {_format_source(key)} not configured. Use `/hb set` first."
 
         # Parse key=value or key value
         rest = args[len("config"):].strip()
@@ -811,7 +811,7 @@ def _cmd_heartbeat(raw_args: str) -> str | None:
         # Parse key value
         parts = rest.split(None, 1)
         if len(parts) < 2:
-            return "❌ Usage: `/heartbeat config <key> <value>`"
+            return "❌ Usage: `/hb config <key> <value>`"
         cfg_key, cfg_val = parts[0], parts[1]
         sc = sessions[key]
 
@@ -852,8 +852,8 @@ def register(ctx) -> None:
     ctx.register_hook("pre_gateway_dispatch", _on_pre_gateway_dispatch)
     ctx.register_hook("on_session_end", _on_session_end)
     ctx.register_command(
-        name="heartbeat",
+        name="hb",
         handler=_cmd_heartbeat,
-        description="Manage heartbeat: set, unset, list, config, stats, test, pause, resume. Use /heartbeat (no args) for manual trigger.",
+        description="Heartbeat: set, unset, list, config, stats, test, pause, resume. Use /hb (no args) for manual trigger.",
         args_hint="[set|unset|list|config [key] [value]|stats|test|pause [duration]|resume]",
     )

@@ -401,5 +401,5 @@ class TestRegister:
         assert ctx.hooks[0][0] == "pre_gateway_dispatch"
         assert ctx.hooks[1][0] == "on_session_end"
         assert len(ctx.commands) == 1
-        assert ctx.commands[0][0] == "heartbeat"
+        assert ctx.commands[0][0] == "hb"
         assert "set" in ctx.commands[0][2]  # description mentions subcommands
