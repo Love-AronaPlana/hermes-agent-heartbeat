@@ -4,23 +4,24 @@ __pycache__/
 *.egg-info/
 dist/
 build/
-.venv/
-venv/
 
-# Hermes local state (never commit)
-~/.hermes/
-.hermes/
+# Testing
+.pytest_cache/
+htmlcov/
+.coverage
+*.cover
 
-# Editor
+# IDE
 .vscode/
 .idea/
 *.swp
+*.swo
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Test artifacts
-.pytest_cache/
-.coverage
-htmlcov/
+# Environment
+.env
+.venv/
+venv/

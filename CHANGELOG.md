@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.2.0 (2026-08-15)
+
+### 🚀 New Features
+- `/heartbeat stats` — view wakeup statistics (total, skipped, last error, last wakeup time)
+- `/heartbeat stats clear` — reset statistics for the current session
+- `/heartbeat test` — dry-run: check all config conditions without actually delivering a wakeup
+- `/heartbeat pause [duration]` — temporarily pause heartbeats (`30m`, `2h`, or seconds)
+- `/heartbeat resume` — resume paused heartbeats
+- **Multi-prompt rotation** — `prompt_files` array, picked randomly each cycle
+- **Jitter** — random interval offset (±N%) to avoid predictable beats
+- **Persistent stats** — wakeup/skip counts survive gateway restarts
+- **Graceful shutdown** — `on_session_end` hook cancels all heartbeat tasks
+- **Multi-platform adapter** — dynamic adapter lookup, no hardcoded Telegram dependency
+
+### 🐛 Bug Fixes
+- **Hardcoded Telegram adapter** → replaced with `_adapter_for_source()` that dynamically looks up the correct platform adapter
+- **`/heartbeat` triggered ALL sessions** → now only triggers the **current session** (via `_get_current_key()`)
+- **Race condition on loop creation** → added `asyncio.Lock` (`_start_lock`) around task creation
+- **Idle tracking counted agent messages** → `_is_user_message()` check ensures only user-initiated messages reset the idle timer
+- **`stats clear` unreachable** → moved before the general `stats` handler so it actually executes
+
+### 🔧 Improvements
+- `_to_minutes()` extracted as standalone function (testable)
+- `deliver_wake()` has its own try/except block with error tracking
+- `_check_paused()` helper extracted for manual pause support
+- `_adapter_for_source()` helper for dynamic platform lookup
+- `_is_user_message()` helper for accurate idle detection
+
+### 📦 Project Infrastructure
+- Added `pyproject.toml` with project metadata and test dependencies
+- Added `.gitignore` (Python, pytest, IDE, OS artifacts)
+- Added `.github/workflows/test.yml` — CI on push/PR for Python 3.11/3.12
+- Added `on_session_end` hook registration to test suite (2 hooks now)
+- 34 unit tests (was 26), all passing
+
 ## 0.1.2 (2026-08-08)
 
 - Multi-session heartbeat: independent config per channel/thread

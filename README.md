@@ -1,12 +1,13 @@
 # Hermes Agent Heartbeat Plugin
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Test](https://github.com/Love-AronaPlana/hermes-agent-heartbeat/actions/workflows/test.yml/badge.svg)](https://github.com/Love-AronaPlana/hermes-agent-heartbeat/actions/workflows/test.yml)
 [![中文文档](https://img.shields.io/badge/文档-中文-blue)](README_zh.md)
 
-A **heartbeat** plugin for [Hermes Agent](https://hermes-agent.nousresearch.com).  
+A **heartbeat** plugin for [Hermes Agent](https://hermes-agent.nousresearch.com).
 It periodically wakes up the agent **in the same conversation**, preserving full context so the user can discuss, instruct, and steer between wakeups.
 
-> **No more isolated cron jobs that forget what you said.**  
+> **No more isolated cron jobs that forget what you said.**
 > The heartbeat shares the same session — every wakeup remembers the conversation history.
 
 ---
@@ -17,17 +18,27 @@ It periodically wakes up the agent **in the same conversation**, preserving full
 |---|---------|---------|
 | ✅ | **Multi-session** — independent heartbeat per channel/thread | — |
 | ✅ | **Periodic wakeup** — configurable interval (60s – 24h) | `900s` |
-| 🆕 | **`/heartbeat set`** — enable heartbeat for the current conversation | — |
-| 🆕 | **`/heartbeat unset`** — disable heartbeat for the current conversation | — |
-| 🆕 | **`/heartbeat list`** — view all configured sessions and their status | — |
-| 🆕 | **`/heartbeat config [key] [value]`** — view/set per-session settings | — |
-| 🆕 | **`/heartbeat`** — trigger an immediate wakeup in the current session | — |
-| 🆕 | **Idle auto-pause** — skip heartbeats when you're away (opt-in) | `off` |
-| 🆕 | **Active time window** — only fire during business hours (opt-in) | `off` |
-| 🆕 | **UTC offset** — configure your timezone for the active window | `+8` |
+| ✅ | **`/heartbeat set`** — enable heartbeat for the current conversation | — |
+| ✅ | **`/heartbeat unset`** — disable heartbeat for the current conversation | — |
+| ✅ | **`/heartbeat list`** — view all configured sessions and their status | — |
+| ✅ | **`/heartbeat config [key] [value]`** — view/set per-session settings | — |
+| ✅ | **`/heartbeat`** — trigger an immediate wakeup in the current session | — |
+| ✅ | **`/heartbeat stats`** — view wakeup statistics (total, skipped, last error) | — |
+| ✅ | **`/heartbeat stats clear`** — reset statistics for the current session | — |
+| ✅ | **`/heartbeat test`** — dry-run showing all config checks without delivering | — |
+| ✅ | **`/heartbeat pause [duration]`** — temporarily pause heartbeats (`30m`, `2h`, or seconds) | `1h` |
+| ✅ | **`/heartbeat resume`** — resume paused heartbeats | — |
+| ✅ | **Idle auto-pause** — skip heartbeats when you're away (opt-in) | `off` |
+| ✅ | **Active time window** — only fire during business hours (opt-in) | `off` |
+| ✅ | **UTC offset** — configure your timezone for the active window | `+8` |
+| ✅ | **Multi-prompt rotation** — array of prompt files, picked randomly each cycle | — |
+| ✅ | **Jitter** — random interval offset (±10% etc.) to avoid predictable beats | `0%` |
+| ✅ | **Persistent stats** — wakeup/skip counts survive gateway restarts | — |
 | ✅ | **`[SILENT]`** — return this in the prompt to skip this cycle silently | — |
 | ✅ | **Hot-reload config** — change interval/prompt without restarting gateway | — |
 | ✅ | **Structured logging** — every wakeup is logged in `gateway.log` | — |
+| ✅ | **Graceful shutdown** — all heartbeat tasks cancelled on session end | — |
+| ✅ | **Multi-platform** — dynamically adapts to any platform adapter (Telegram, Discord, etc.) | — |
 
 ---
 
@@ -36,7 +47,7 @@ It periodically wakes up the agent **in the same conversation**, preserving full
 ### Prerequisites
 
 - Hermes Agent (v0.2.0+)
-- Telegram platform connected (other platforms coming soon)
+- Any messaging platform connected (Telegram, Discord, WeChat, etc.)
 
 ### Install
 
@@ -83,6 +94,12 @@ agent_heartbeat:
   # Defaults applied when a new session is added via /heartbeat set
   default_interval: 900                   # 60-86400 seconds
   default_prompt_file: ~/.hermes/heartbeat/HEARTBEAT.md
+
+  # Optional extras
+  jitter: 0.1                             # ±10% random offset on interval
+  default_prompt_files:                    # multi-prompt rotation (picked randomly)
+    - ~/.hermes/heartbeat/morning.md
+    - ~/.hermes/heartbeat/evening.md
 ```
 
 ### Per-session config (via slash commands)
@@ -93,6 +110,7 @@ agent_heartbeat:
 /heartbeat config                 # View current session settings
 /heartbeat config interval 1800   # Change this session's interval (seconds)
 /heartbeat config prompt_file ~/.hermes/heartbeat/HEARTBEAT.md
+/heartbeat config prompt_files file1.md,file2.md  # comma-separated list
 /heartbeat config active_start 08:00
 /heartbeat config active_end 22:00
 /heartbeat config utc_offset +8
@@ -152,7 +170,12 @@ hermes config set agent_heartbeat.enabled true
 | `/heartbeat unset` | Disable heartbeat for the **current** conversation |
 | `/heartbeat list` | Show all configured sessions and their status |
 | `/heartbeat config` | View the current session's settings |
-| `/heartbeat config <key> <value>` | Change a setting (interval, prompt_file, active_start, active_end, utc_offset, idle_auto_pause_*) |
+| `/heartbeat config <key> <value>` | Change a setting |
+| `/heartbeat stats` | View wakeup statistics |
+| `/heartbeat stats clear` | Reset statistics for current session |
+| `/heartbeat test` | Dry-run: check all config conditions without actual delivery |
+| `/heartbeat pause 30m` | Temporarily pause (30m, 2h, or seconds) |
+| `/heartbeat resume` | Resume paused heartbeats |
 
 ### The prompt file
 
@@ -166,7 +189,32 @@ summarize it concisely. If nothing changed, return [SILENT] to stay quiet.
 ```
 
 - The prompt is **re-read every cycle** — edit it live, no restart needed.
-- Return `[SILENT]` as the first line of the prompt to skip this cycle silently.
+- Return `[SILENT]` as the first line of the response to skip this cycle silently.
+
+### Multi-prompt rotation
+
+Configure multiple prompt files for variety:
+
+```yaml
+# config.yaml
+agent_heartbeat:
+  default_prompt_files:
+    - ~/.hermes/heartbeat/market.md
+    - ~/.hermes/heartbeat/system.md
+    - ~/.hermes/heartbeat/greeting.md
+```
+
+Each cycle picks one randomly. If all files are missing, falls back to
+`prompt_file` → inline `prompt`.
+
+### Jitter
+
+Add a random offset to the interval to avoid predictable beats:
+
+```yaml
+agent_heartbeat:
+  jitter: 0.1   # ±10% random offset (range: 0.0 - 0.5)
+```
 
 ### Manual trigger
 
@@ -176,7 +224,8 @@ In any conversation where the heartbeat is active, type:
 /heartbeat
 ```
 
-This immediately fires the next wakeup cycle, skipping the interval wait.
+This immediately fires the next wakeup cycle in the **current session only**,
+skipping the interval wait.
 
 ### Idle auto-pause
 
@@ -188,6 +237,9 @@ you send restores it automatically.
 /heartbeat config idle_auto_pause_enabled true
 /heartbeat config idle_auto_pause_minutes 120
 ```
+
+> **Note:** Idle tracking only counts user-initiated messages — agent responses
+> from heartbeat wakeups don't reset the idle timer.
 
 ### Active time window
 
@@ -201,6 +253,55 @@ When configured, the heartbeat only fires between `active_start` and
 /heartbeat config utc_offset +8
 ```
 
+### Pause/Resume
+
+Temporarily pause heartbeats without disabling the session config:
+
+```bash
+/heartbeat pause          # Pause for 1 hour (default)
+/heartbeat pause 30m      # Pause for 30 minutes
+/heartbeat pause 2h       # Pause for 2 hours
+/heartbeat pause 7200     # Pause for 7200 seconds
+/heartbeat resume         # Resume immediately
+```
+
+### Stats
+
+View wakeup statistics:
+
+```bash
+/heartbeat stats
+# > Heartbeat Stats for telegram/6211819157/DM:
+# >   Status: 🟢 Active
+# >   Total wakeups: 47
+# >   Total skipped: 3
+# >   Last wakeup: 12m ago
+# >   Last error: (none)
+
+/heartbeat stats clear    # Reset counters
+```
+
+### Test (dry-run)
+
+Check all conditions without actually delivering a wakeup:
+
+```bash
+/heartbeat test
+# > Heartbeat Test for telegram/6211819157/DM:
+# >   Global enabled: True
+# >   Session enabled: True
+# >   Interval: 900s
+# >   Jitter: ±10%
+# >   Window: 08:00-02:00 UTC+8
+# >   Current time: 14:35 (✅ in window)
+# >   Idle: 5m since last message (active)
+# >   Paused: no
+# >   Prompt: [Heartbeat Wakeup]\n\nCheck the current market...
+# >   Prompt length: 142 chars
+# >   Adapter: ✅ available
+# >   Loop status: 🟢 running
+```
+
 ---
 
 ## How It Works
@@ -209,22 +310,24 @@ When configured, the heartbeat only fires between `active_start` and
 User sends a message
        │
        ▼
-pre_gateway_dispatch hook  ──►  Starts asyncio loop
+pre_gateway_dispatch hook  ──►  Starts asyncio loop (with lock)
        │                              │
        │                              ▼
   (normal dispatch)           Every interval:
-                                  1. Read config
+                                  1. Read config (hot-reload)
                                   2. Check time window
-                                  3. Check idle pause
-                                  4. Read prompt file
-                                  5. deliver_wake() → same session
-                                  6. User sees agent response
-                                  7. User can reply (context preserved)
+                                  3. Check idle pause (user msgs only)
+                                  4. Check manual pause
+                                  5. Read prompt file (hot-reload)
+                                  6. deliver_wake() → same session
+                                  7. Track stats
+                                  8. User sees agent response
+                                  9. User can reply (context preserved)
 ```
 
 The plugin registers:
-- **1 hook**: `pre_gateway_dispatch` — binds to the session on first message
-- **1 slash command**: `/heartbeat` — immediate manual trigger
+- **2 hooks**: `pre_gateway_dispatch` — binds to session, `on_session_end` — graceful shutdown
+- **1 slash command**: `/heartbeat` — manual trigger with all subcommands
 
 ---
 
@@ -235,8 +338,8 @@ The plugin registers:
 git clone https://github.com/Love-AronaPlana/hermes-agent-heartbeat.git
 cd hermes-agent-heartbeat
 
-# The plugin is tested live in a Hermes gateway — there's no separate test suite
-# yet. Contributions welcome!
+# Run unit tests
+python3 -m pytest tests/ -v
 ```
 
 ---
@@ -246,8 +349,12 @@ cd hermes-agent-heartbeat
 | Platform | Status |
 |----------|--------|
 | Telegram | ✅ Tested |
-| Discord | 🚧 Planned |
-| WeChat | 🚧 Planned |
+| Discord  | ✅ Supported (dynamic adapter) |
+| WeChat   | ✅ Supported (dynamic adapter) |
+| Feishu   | ✅ Supported (dynamic adapter) |
+
+The plugin dynamically looks up the correct adapter for each platform —
+no hardcoded Telegram dependency.
 
 ---
 

@@ -1,0 +1,18 @@
+[project]
+name = "agent-heartbeat"
+version = "0.2.0"
+description = "Persistent heartbeat plugin for Hermes Agent — periodic wakeups in the same gateway session with full context preservation"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "Love-AronaPlana"},
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
