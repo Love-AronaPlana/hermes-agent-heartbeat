@@ -18,16 +18,16 @@ It periodically wakes up the agent **in the same conversation**, preserving full
 |---|---------|---------|
 | ✅ | **Multi-session** — independent heartbeat per channel/thread | — |
 | ✅ | **Periodic wakeup** — configurable interval (60s – 24h) | `900s` |
-| ✅ | **`/heartbeat set`** — enable heartbeat for the current conversation | — |
-| ✅ | **`/heartbeat unset`** — disable heartbeat for the current conversation | — |
-| ✅ | **`/heartbeat list`** — view all configured sessions and their status | — |
-| ✅ | **`/heartbeat config [key] [value]`** — view/set per-session settings | — |
-| ✅ | **`/heartbeat`** — trigger an immediate wakeup in the current session | — |
-| ✅ | **`/heartbeat stats`** — view wakeup statistics (total, skipped, last error) | — |
-| ✅ | **`/heartbeat stats clear`** — reset statistics for the current session | — |
-| ✅ | **`/heartbeat test`** — dry-run showing all config checks without delivering | — |
-| ✅ | **`/heartbeat pause [duration]`** — temporarily pause heartbeats (`30m`, `2h`, or seconds) | `1h` |
-| ✅ | **`/heartbeat resume`** — resume paused heartbeats | — |
+| ✅ | **`/xt set`** — enable heartbeat for the current conversation | — |
+| ✅ | **`/xt unset`** — disable heartbeat for the current conversation | — |
+| ✅ | **`/xt list`** — view all configured sessions and their status | — |
+| ✅ | **`/xt config [key] [value]`** — view/set per-session settings | — |
+| ✅ | **`/xt`** — trigger an immediate wakeup in the current session | — |
+| ✅ | **`/xt stats`** — view wakeup statistics (total, skipped, last error) | — |
+| ✅ | **`/xt stats clear`** — reset statistics for the current session | — |
+| ✅ | **`/xt test`** — dry-run showing all config checks without delivering | — |
+| ✅ | **`/xt pause [duration]`** — temporarily pause heartbeats (`30m`, `2h`, or seconds) | `1h` |
+| ✅ | **`/xt resume`** — resume paused heartbeats | — |
 | ✅ | **Idle auto-pause** — skip heartbeats when you're away (opt-in) | `off` |
 | ✅ | **Active time window** — only fire during business hours (opt-in) | `off` |
 | ✅ | **UTC offset** — configure your timezone for the active window | `+8` |
@@ -82,7 +82,7 @@ hermes gateway restart
 Two layers of config:
 
 1. **Global settings** under `agent_heartbeat:` in `~/.hermes/config.yaml` — the master switch and defaults for new sessions.
-2. **Per-session settings** in `~/.hermes/heartbeat/sessions.json` — managed via `/heartbeat set` / `/heartbeat config` slash commands (no manual editing needed).
+2. **Per-session settings** in `~/.hermes/heartbeat/sessions.json` — managed via `/xt set` / `/xt config` slash commands (no manual editing needed).
 
 ### Global config (config.yaml)
 
@@ -91,7 +91,7 @@ agent_heartbeat:
   # Required: master switch (must be true for any session to fire)
   enabled: true
 
-  # Defaults applied when a new session is added via /heartbeat set
+  # Defaults applied when a new session is added via /xt set
   default_interval: 900                   # 60-86400 seconds
   default_prompt_file: ~/.hermes/heartbeat/HEARTBEAT.md
 
@@ -106,17 +106,17 @@ agent_heartbeat:
 
 ```bash
 # In any conversation:
-/heartbeat set                    # Enable heartbeat for THIS conversation
-/heartbeat config                 # View current session settings
-/heartbeat config interval 1800   # Change this session's interval (seconds)
-/heartbeat config prompt_file ~/.hermes/heartbeat/HEARTBEAT.md
-/heartbeat config prompt_files file1.md,file2.md  # comma-separated list
-/heartbeat config active_start 08:00
-/heartbeat config active_end 22:00
-/heartbeat config utc_offset +8
-/heartbeat config idle_auto_pause_enabled true
-/heartbeat config idle_auto_pause_minutes 120
-/heartbeat unset                  # Disable heartbeat for THIS conversation
+/xt set                    # Enable heartbeat for THIS conversation
+/xt config                 # View current session settings
+/xt config interval 1800   # Change this session's interval (seconds)
+/xt config prompt_file ~/.hermes/heartbeat/HEARTBEAT.md
+/xt config prompt_files file1.md,file2.md  # comma-separated list
+/xt config active_start 08:00
+/xt config active_end 22:00
+/xt config utc_offset +8
+/xt config idle_auto_pause_enabled true
+/xt config idle_auto_pause_minutes 120
+/xt unset                  # Disable heartbeat for THIS conversation
 ```
 
 Per-session settings are stored in `~/.hermes/heartbeat/sessions.json`:
@@ -158,24 +158,27 @@ hermes config set agent_heartbeat.default_prompt_file "~/.hermes/heartbeat/HEART
 hermes config set agent_heartbeat.enabled true
 
 # 2. In the conversation where you want a heartbeat:
-/heartbeat set
+/xt set
 ```
 
 ### Slash commands
 
+> **Aliases:** `/heartbeat` and `/hb` are also intercepted and route to the same
+> handler, so both old muscle memory and the Hermes built-in name keep working.
+
 | Command | What it does |
 |---------|--------------|
-| `/heartbeat` | Trigger an immediate wakeup in the current session |
-| `/heartbeat set` | Enable heartbeat for the **current** conversation |
-| `/heartbeat unset` | Disable heartbeat for the **current** conversation |
-| `/heartbeat list` | Show all configured sessions and their status |
-| `/heartbeat config` | View the current session's settings |
-| `/heartbeat config <key> <value>` | Change a setting |
-| `/heartbeat stats` | View wakeup statistics |
-| `/heartbeat stats clear` | Reset statistics for current session |
-| `/heartbeat test` | Dry-run: check all config conditions without actual delivery |
-| `/heartbeat pause 30m` | Temporarily pause (30m, 2h, or seconds) |
-| `/heartbeat resume` | Resume paused heartbeats |
+| `/xt` | Trigger an immediate wakeup in the current session |
+| `/xt set` | Enable heartbeat for the **current** conversation |
+| `/xt unset` | Disable heartbeat for the **current** conversation |
+| `/xt list` | Show all configured sessions and their status |
+| `/xt config` | View the current session's settings |
+| `/xt config <key> <value>` | Change a setting |
+| `/xt stats` | View wakeup statistics |
+| `/xt stats clear` | Reset statistics for current session |
+| `/xt test` | Dry-run: check all config conditions without actual delivery |
+| `/xt pause 30m` | Temporarily pause (30m, 2h, or seconds) |
+| `/xt resume` | Resume paused heartbeats |
 
 ### The prompt file
 
@@ -221,7 +224,7 @@ agent_heartbeat:
 In any conversation where the heartbeat is active, type:
 
 ```
-/heartbeat
+/xt
 ```
 
 This immediately fires the next wakeup cycle in the **current session only**,
@@ -234,8 +237,8 @@ for `idle_auto_pause_minutes`, the heartbeat goes silent. The next message
 you send restores it automatically.
 
 ```bash
-/heartbeat config idle_auto_pause_enabled true
-/heartbeat config idle_auto_pause_minutes 120
+/xt config idle_auto_pause_enabled true
+/xt config idle_auto_pause_minutes 120
 ```
 
 > **Note:** Idle tracking only counts user-initiated messages — agent responses
@@ -248,9 +251,9 @@ When configured, the heartbeat only fires between `active_start` and
 `utc_offset` to match your local timezone.
 
 ```bash
-/heartbeat config active_start 08:00
-/heartbeat config active_end 02:00
-/heartbeat config utc_offset +8
+/xt config active_start 08:00
+/xt config active_end 02:00
+/xt config utc_offset +8
 ```
 
 ### Pause/Resume
@@ -258,11 +261,11 @@ When configured, the heartbeat only fires between `active_start` and
 Temporarily pause heartbeats without disabling the session config:
 
 ```bash
-/heartbeat pause          # Pause for 1 hour (default)
-/heartbeat pause 30m      # Pause for 30 minutes
-/heartbeat pause 2h       # Pause for 2 hours
-/heartbeat pause 7200     # Pause for 7200 seconds
-/heartbeat resume         # Resume immediately
+/xt pause          # Pause for 1 hour (default)
+/xt pause 30m      # Pause for 30 minutes
+/xt pause 2h       # Pause for 2 hours
+/xt pause 7200     # Pause for 7200 seconds
+/xt resume         # Resume immediately
 ```
 
 ### Stats
@@ -270,7 +273,7 @@ Temporarily pause heartbeats without disabling the session config:
 View wakeup statistics:
 
 ```bash
-/heartbeat stats
+/xt stats
 # > Heartbeat Stats for telegram/6211819157/DM:
 # >   Status: 🟢 Active
 # >   Total wakeups: 47
@@ -278,7 +281,7 @@ View wakeup statistics:
 # >   Last wakeup: 12m ago
 # >   Last error: (none)
 
-/heartbeat stats clear    # Reset counters
+/xt stats clear    # Reset counters
 ```
 
 ### Test (dry-run)
@@ -286,7 +289,7 @@ View wakeup statistics:
 Check all conditions without actually delivering a wakeup:
 
 ```bash
-/heartbeat test
+/xt test
 # > Heartbeat Test for telegram/6211819157/DM:
 # >   Global enabled: True
 # >   Session enabled: True
@@ -327,7 +330,7 @@ pre_gateway_dispatch hook  ──►  Starts asyncio loop (with lock)
 
 The plugin registers:
 - **2 hooks**: `pre_gateway_dispatch` — binds to session, `on_session_end` — graceful shutdown
-- **1 slash command**: `/heartbeat` — manual trigger with all subcommands
+- **1 slash command**: `/xt` — manual trigger with all subcommands
 
 ---
 

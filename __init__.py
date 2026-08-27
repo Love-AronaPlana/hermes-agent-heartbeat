@@ -6,7 +6,7 @@ gateway session via ``deliver_wake``. The agent remembers the conversation,
 and the user can reply between wakeups — context is fully preserved.
 
 Supports multiple sessions (different channels/threads), each with its own
-config. Manage via ``/hb set|unset|list|config|stats|test|pause|resume``
+config. Manage via ``/xt set|unset|list|config|stats|test|pause|resume``
 slash commands.
 
 License: MIT
@@ -449,20 +449,27 @@ async def _run(gateway: Any, source: Any, key: str) -> None:
 
 
 def _on_pre_gateway_dispatch(event: Any, gateway: Any, **_: Any) -> dict | None:
-    """Intercept /hb and /heartbeat commands, then bind heartbeat to sessions."""
+    """Intercept /xt commands, then bind heartbeat to sessions."""
     global _last_source
 
     source = getattr(event, "source", None)
     if source is None:
         return
 
-    # ── Intercept /hb and /heartbeat commands BEFORE built-in dispatch ──
+    # Record the current message's source BEFORE interception so /xt command
+    # handlers (set/status/...) know which conversation they came from.
+    _last_source = source
+
+    # ── Intercept /xt, /heartbeat, /hb BEFORE built-in dispatch ──
+    # Hermes core ships a built-in /heartbeat whose aliases include /hb; we
+    # take over all three so the plugin's richer command set always wins.
+    # register_command("xt") in register() is a second safety net.
     text = (getattr(event, "text", "") or "").strip()
-    if text.startswith("/hb") or text.startswith("/heartbeat"):
+    if text.startswith("/xt") or text.startswith("/heartbeat") or text.startswith("/hb"):
         # Extract args after the command name
         _, _, remainder = text.partition(" ")
         remainder = remainder.strip()
-        response_text = _cmd_heartbeat(remainder)
+        response_text = _cmd_xt(remainder)
         if response_text:
             # Send reply via adapter, then skip built-in dispatch
             try:
@@ -472,8 +479,6 @@ def _on_pre_gateway_dispatch(event: Any, gateway: Any, **_: Any) -> dict | None:
             except Exception:
                 logger.warning("agent-heartbeat: failed to send command response", exc_info=True)
             return {"action": "skip", "reason": "agent-heartbeat handled command"}
-
-    _last_source = source
 
     g = _global_config()
     if not bool(g.get("enabled", False)):
@@ -535,17 +540,17 @@ def _get_current_key() -> str | None:
     return _session_key(_last_source)
 
 
-def _cmd_heartbeat(raw_args: str) -> str | None:
+def _cmd_xt(raw_args: str) -> str | None:
     args = raw_args.strip()
 
-    # ── /heartbeat (no subcommand) — manual trigger for CURRENT session ──
-    if not args or args.startswith("/hb"):
+    # ── /xt (no subcommand) — manual trigger for CURRENT session ──
+    if not args:
         current_key = _get_current_key()
         if current_key is None:
             return "❌ No session context. Send a message first."
         task = _tasks.get(current_key)
         if task is None or task.done():
-            return "❌ No active heartbeat for this session. Use `/hb set` first."
+            return "❌ No active heartbeat for this session. Use `/xt set` first."
         event = _triggers.get(current_key)
         if event is not None:
             event.set()
@@ -555,7 +560,7 @@ def _cmd_heartbeat(raw_args: str) -> str | None:
 
     subcmd = args.split()[0].lower()
 
-    # ── /heartbeat status — show current session heartbeat status ──
+    # ── /xt status — show current session heartbeat status ──
     if subcmd == "status":
         current_key = _get_current_key()
         if current_key is None:
@@ -563,7 +568,7 @@ def _cmd_heartbeat(raw_args: str) -> str | None:
         sessions = _load_sessions()
         sc = sessions.get(current_key)
         if sc is None or not sc.get("enabled", False):
-            return "No heartbeat configured for this session. Use `/hb set` to enable one."
+            return "No heartbeat configured for this session. Use `/xt set` to enable one."
         task = _tasks.get(current_key)
         is_active = task is not None and not task.done()
         paused_until = str(sc.get("paused_until", "") or "").strip()
@@ -578,11 +583,11 @@ def _cmd_heartbeat(raw_args: str) -> str | None:
                f"  Interval: {int(sc.get('interval', 900))}s\n" \
                f"  Window: {sc.get('active_start', '') or 'all day'}–{sc.get('active_end', '') or 'all day'}"
 
-    # ── /heartbeat list ────────────────────────────────────────────────────
+    # ── /xt list ────────────────────────────────────────────────────
     if subcmd == "list":
         sessions = _load_sessions()
         if not sessions:
-            return "No sessions configured. Use `/hb set` to add one."
+            return "No sessions configured. Use `/xt set` to add one."
 
         lines = []
         for key, sc in sorted(sessions.items()):
@@ -607,7 +612,7 @@ def _cmd_heartbeat(raw_args: str) -> str | None:
                 lines.append(f"         Window: {sc['active_start']}-{sc['active_end']} UTC{sc.get('utc_offset', '+8')}")
         return "**Heartbeat Sessions:**\n" + "\n".join(lines)
 
-    # ── /hb set ─────────────────────────────────────────────────────
+    # ── /xt set ─────────────────────────────────────────────────────
     if subcmd == "set":
         key = _get_current_key()
         if key is None:
@@ -622,10 +627,10 @@ def _cmd_heartbeat(raw_args: str) -> str | None:
             sessions[key] = dict(defaults)
             sessions[key]["enabled"] = True
         _save_sessions(sessions)
-        logger.info("agent-heartbeat: enabled for %s via /hb set", key)
+        logger.info("agent-heartbeat: enabled for %s via /xt set", key)
         return f"✅ Heartbeat enabled for {_format_source(key)}.\n   Interval: {int(sessions[key]['interval'])}s\n   Send a message to activate."
 
-    # ── /heartbeat unset ───────────────────────────────────────────────────
+    # ── /xt unset ───────────────────────────────────────────────────
     if subcmd == "unset":
         key = _get_current_key()
         if key is None:
@@ -635,18 +640,18 @@ def _cmd_heartbeat(raw_args: str) -> str | None:
             sessions[key]["enabled"] = False
             sessions[key].pop("paused_until", None)
             _save_sessions(sessions)
-            logger.info("agent-heartbeat: disabled for %s via /heartbeat unset", key)
+            logger.info("agent-heartbeat: disabled for %s via /xt unset", key)
             return f"✅ Heartbeat disabled for {_format_source(key)}."
         return "❌ Heartbeat not configured for this session."
 
-    # ── /heartbeat pause ───────────────────────────────────────────────────
+    # ── /xt pause ───────────────────────────────────────────────────
     if subcmd == "pause":
         key = _get_current_key()
         if key is None:
             return "❌ No session context."
         sessions = _load_sessions()
         if key not in sessions:
-            return f"❌ Session {_format_source(key)} not configured. Use `/hb set` first."
+            return f"❌ Session {_format_source(key)} not configured. Use `/xt set` first."
 
         # Parse optional duration (default: 1 hour)
         rest = args[len("pause"):].strip()
@@ -672,14 +677,14 @@ def _cmd_heartbeat(raw_args: str) -> str | None:
         human = f"{duration//60}m" if duration < 3600 else f"{duration//3600}h"
         return f"⏸️ Heartbeat paused for {_format_source(key)} ({human})."
 
-    # ── /heartbeat resume ──────────────────────────────────────────────────
+    # ── /xt resume ──────────────────────────────────────────────────
     if subcmd == "resume":
         key = _get_current_key()
         if key is None:
             return "❌ No session context."
         sessions = _load_sessions()
         if key not in sessions:
-            return f"❌ Session {_format_source(key)} not configured. Use `/hb set` first."
+            return f"❌ Session {_format_source(key)} not configured. Use `/xt set` first."
         if "paused_until" not in sessions[key] or not sessions[key].get("paused_until"):
             return f"ℹ️ Heartbeat for {_format_source(key)} is not paused."
         sessions[key].pop("paused_until", None)
@@ -687,7 +692,7 @@ def _cmd_heartbeat(raw_args: str) -> str | None:
         logger.info("agent-heartbeat: resumed for %s", key)
         return f"▶️ Heartbeat resumed for {_format_source(key)}."
 
-    # ── /heartbeat stats clear ────────────────────────────────────────────
+    # ── /xt stats clear ────────────────────────────────────────────
     if subcmd == "stats" and len(args.split()) > 1 and args.split()[1].lower() == "clear":
         key = _get_current_key()
         if key is None:
@@ -695,7 +700,7 @@ def _cmd_heartbeat(raw_args: str) -> str | None:
         _clear_stats(key)
         return f"✅ Stats cleared for {_format_source(key)}."
 
-    # ── /heartbeat stats ───────────────────────────────────────────────────
+    # ── /xt stats ───────────────────────────────────────────────────
     if subcmd == "stats":
         key = _get_current_key()
         if key is None:
@@ -733,7 +738,7 @@ def _cmd_heartbeat(raw_args: str) -> str | None:
             lines.append(f"  Created: {created}")
         return "\n".join(lines)
 
-    # ── /heartbeat stats clear ─────────────────────────────────────────────
+    # ── /xt stats clear ─────────────────────────────────────────────
     if subcmd == "stats" and len(args.split()) > 1 and args.split()[1].lower() == "clear":
         key = _get_current_key()
         if key is None:
@@ -741,7 +746,7 @@ def _cmd_heartbeat(raw_args: str) -> str | None:
         _clear_stats(key)
         return f"✅ Stats cleared for {_format_source(key)}."
 
-    # ── /heartbeat test — dry run ──────────────────────────────────────────
+    # ── /xt test — dry run ──────────────────────────────────────────
     if subcmd == "test":
         key = _get_current_key()
         if key is None:
@@ -819,14 +824,14 @@ def _cmd_heartbeat(raw_args: str) -> str | None:
 
         return "\n".join(lines)
 
-    # ── /hb config [key] [value] ────────────────────────────────────
+    # ── /xt config [key] [value] ────────────────────────────────────
     if subcmd == "config":
         key = _get_current_key()
         if key is None:
             return "❌ No session context."
         sessions = _load_sessions()
         if key not in sessions:
-            return f"❌ Session {_format_source(key)} not configured. Use `/hb set` first."
+            return f"❌ Session {_format_source(key)} not configured. Use `/xt set` first."
 
         # Parse key=value or key value
         rest = args[len("config"):].strip()
@@ -851,7 +856,7 @@ def _cmd_heartbeat(raw_args: str) -> str | None:
         # Parse key value
         parts = rest.split(None, 1)
         if len(parts) < 2:
-            return "❌ Usage: `/hb config <key> <value>`"
+            return "❌ Usage: `/xt config <key> <value>`"
         cfg_key, cfg_val = parts[0], parts[1]
         sc = sessions[key]
 
@@ -891,7 +896,16 @@ def _cmd_heartbeat(raw_args: str) -> str | None:
 def register(ctx) -> None:
     ctx.register_hook("pre_gateway_dispatch", _on_pre_gateway_dispatch)
     ctx.register_hook("on_session_end", _on_session_end)
-    # Note: commands are intercepted via the pre_gateway_dispatch hook rather
-    # than register_command, because Hermes core has a built-in /heartbeat
-    # command that rejects plugin registration of the same name. The hook
-    # catches both /hb and /heartbeat prefixes before the built-in dispatch.
+    # Primary interception is the pre_gateway_dispatch hook (see
+    # _on_pre_gateway_dispatch), which fires before built-in dispatch and
+    # sends the reply itself. /heartbeat and /hb are taken over there (Hermes
+    # core has a built-in /heartbeat with alias /hb, so those two names are
+    # rejected if registered normally). /xt never collides, so we also register
+    # it as a normal command — a second safety net if the hook ever fails to
+    # load.
+    ctx.register_command(
+        name="xt",
+        handler=_cmd_xt,
+        description="Persistent heartbeat: periodic wakeups in this conversation",
+        args_hint="[set|unset|list|config|stats|test|pause|resume]",
+    )

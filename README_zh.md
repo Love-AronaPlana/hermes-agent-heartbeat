@@ -17,16 +17,16 @@
 |---|------|--------|
 | ✅ | **多会话** — 每个频道/线程独立的心跳 | — |
 | ✅ | **周期唤醒** — 可配置间隔（60秒 – 24小时） | `900s` |
-| ✅ | **`/heartbeat set`** — 为当前对话开启心跳 | — |
-| ✅ | **`/heartbeat unset`** — 为当前对话关闭心跳 | — |
-| ✅ | **`/heartbeat list`** — 查看所有已配置会话及状态 | — |
-| ✅ | **`/heartbeat config [key] [value]`** — 查看/设置当前会话参数 | — |
-| ✅ | **`/heartbeat`** — 在当前会话立即触发一次唤醒 | — |
-| ✅ | **`/heartbeat stats`** — 查看唤醒统计（次数、跳过、最后错误） | — |
-| ✅ | **`/heartbeat stats clear`** — 重置当前会话的统计 | — |
-| ✅ | **`/heartbeat test`** — 干运行，检查所有配置条件但不实际触发 | — |
-| ✅ | **`/heartbeat pause [时长]`** — 临时暂停心跳（`30m`、`2h`、或以秒为单位） | `1h` |
-| ✅ | **`/heartbeat resume`** — 恢复暂停的心跳 | — |
+| ✅ | **`/xt set`** — 为当前对话开启心跳 | — |
+| ✅ | **`/xt unset`** — 为当前对话关闭心跳 | — |
+| ✅ | **`/xt list`** — 查看所有已配置会话及状态 | — |
+| ✅ | **`/xt config [key] [value]`** — 查看/设置当前会话参数 | — |
+| ✅ | **`/xt`** — 在当前会话立即触发一次唤醒 | — |
+| ✅ | **`/xt stats`** — 查看唤醒统计（次数、跳过、最后错误） | — |
+| ✅ | **`/xt stats clear`** — 重置当前会话的统计 | — |
+| ✅ | **`/xt test`** — 干运行，检查所有配置条件但不实际触发 | — |
+| ✅ | **`/xt pause [时长]`** — 临时暂停心跳（`30m`、`2h`、或以秒为单位） | `1h` |
+| ✅ | **`/xt resume`** — 恢复暂停的心跳 | — |
 | ✅ | **空闲自动暂停** — 长时间不发言时自动静默（可选） | `off` |
 | ✅ | **活跃时间段** — 只在设定时段内唤醒（可选） | `off` |
 | ✅ | **UTC 时区偏移** — 为活跃时间段配置你的时区 | `+8` |
@@ -81,7 +81,7 @@ hermes gateway restart
 配置分两层：
 
 1. **全局设置**：`~/.hermes/config.yaml` 的 `agent_heartbeat:` 下 — 主开关和新会话的默认值。
-2. **每个会话的设置**：`~/.hermes/heartbeat/sessions.json` — 通过 `/heartbeat set` / `/heartbeat config` 命令管理（无需手动编辑）。
+2. **每个会话的设置**：`~/.hermes/heartbeat/sessions.json` — 通过 `/xt set` / `/xt config` 命令管理（无需手动编辑）。
 
 ### 全局配置（config.yaml）
 
@@ -90,7 +90,7 @@ agent_heartbeat:
   # 必填：主开关（任何会话要唤醒都必须为 true）
   enabled: true
 
-  # 通过 /heartbeat set 新建会话时应用的默认值
+  # 通过 /xt set 新建会话时应用的默认值
   default_interval: 900                   # 60-86400 秒
   default_prompt_file: ~/.hermes/heartbeat/HEARTBEAT.md
 
@@ -105,17 +105,17 @@ agent_heartbeat:
 
 ```bash
 # 在任意对话中：
-/heartbeat set                    # 为【当前】对话开启心跳
-/heartbeat config                 # 查看当前会话设置
-/heartbeat config interval 1800   # 修改当前会话间隔（秒）
-/heartbeat config prompt_file ~/.hermes/heartbeat/HEARTBEAT.md
-/heartbeat config prompt_files file1.md,file2.md  # 逗号分隔列表
-/heartbeat config active_start 08:00
-/heartbeat config active_end 22:00
-/heartbeat config utc_offset +8
-/heartbeat config idle_auto_pause_enabled true
-/heartbeat config idle_auto_pause_minutes 120
-/heartbeat unset                  # 为【当前】对话关闭心跳
+/xt set                    # 为【当前】对话开启心跳
+/xt config                 # 查看当前会话设置
+/xt config interval 1800   # 修改当前会话间隔（秒）
+/xt config prompt_file ~/.hermes/heartbeat/HEARTBEAT.md
+/xt config prompt_files file1.md,file2.md  # 逗号分隔列表
+/xt config active_start 08:00
+/xt config active_end 22:00
+/xt config utc_offset +8
+/xt config idle_auto_pause_enabled true
+/xt config idle_auto_pause_minutes 120
+/xt unset                  # 为【当前】对话关闭心跳
 ```
 
 每个会话的设置存储在 `~/.hermes/heartbeat/sessions.json`：
@@ -157,24 +157,26 @@ hermes config set agent_heartbeat.default_prompt_file "~/.hermes/heartbeat/HEART
 hermes config set agent_heartbeat.enabled true
 
 # 2. 在你想开启心跳的对话中：
-/heartbeat set
+/xt set
 ```
 
 ### 斜杠命令
 
+> **别名：** `/heartbeat` 和 `/hb` 同样会被接管并路由到同一个处理器，旧肌肉记忆和 Hermes 内置命令名都能继续用。
+
 | 命令 | 作用 |
 |------|------|
-| `/heartbeat` | 在当前会话立即触发一次唤醒 |
-| `/heartbeat set` | 为当前对话开启心跳 |
-| `/heartbeat unset` | 为当前对话关闭心跳 |
-| `/heartbeat list` | 查看所有已配置会话及其状态 |
-| `/heartbeat config` | 查看当前会话的设置 |
-| `/heartbeat config <key> <value>` | 修改设置 |
-| `/heartbeat stats` | 查看唤醒统计 |
-| `/heartbeat stats clear` | 重置当前会话的统计 |
-| `/heartbeat test` | 干运行：检查所有配置条件但不实际触发 |
-| `/heartbeat pause 30m` | 临时暂停（30m、2h、或以秒为单位） |
-| `/heartbeat resume` | 恢复暂停的心跳 |
+| `/xt` | 在当前会话立即触发一次唤醒 |
+| `/xt set` | 为当前对话开启心跳 |
+| `/xt unset` | 为当前对话关闭心跳 |
+| `/xt list` | 查看所有已配置会话及其状态 |
+| `/xt config` | 查看当前会话的设置 |
+| `/xt config <key> <value>` | 修改设置 |
+| `/xt stats` | 查看唤醒统计 |
+| `/xt stats clear` | 重置当前会话的统计 |
+| `/xt test` | 干运行：检查所有配置条件但不实际触发 |
+| `/xt pause 30m` | 临时暂停（30m、2h、或以秒为单位） |
+| `/xt resume` | 恢复暂停的心跳 |
 
 ### 唤醒词文件
 
@@ -219,7 +221,7 @@ agent_heartbeat:
 在任意激活了 heartbeat 的会话中发送：
 
 ```
-/heartbeat
+/xt
 ```
 
 仅在当前会话触发一次唤醒，不干扰其他会话。
@@ -229,8 +231,8 @@ agent_heartbeat:
 启用后，插件会记录你的最后一条**用户**消息。如果超过 `idle_auto_pause_minutes` 没有任何消息，heartbeat 自动静默。你下次发送消息后自动恢复。
 
 ```bash
-/heartbeat config idle_auto_pause_enabled true
-/heartbeat config idle_auto_pause_minutes 120
+/xt config idle_auto_pause_enabled true
+/xt config idle_auto_pause_minutes 120
 ```
 
 > **注意：** 空闲检测只统计用户主动发送的消息——心跳唤醒的 agent 回复不会重置空闲计时器。
@@ -240,9 +242,9 @@ agent_heartbeat:
 配置后，heartbeat 只在 `active_start` 到 `active_end` 之间唤醒。支持跨午夜时间段（如 22:00-02:00）。通过 `utc_offset` 配置你的本地时区。
 
 ```bash
-/heartbeat config active_start 08:00
-/heartbeat config active_end 02:00
-/heartbeat config utc_offset +8
+/xt config active_start 08:00
+/xt config active_end 02:00
+/xt config utc_offset +8
 ```
 
 ### 暂停/恢复
@@ -250,11 +252,11 @@ agent_heartbeat:
 临时暂停心跳，不删除会话配置：
 
 ```bash
-/heartbeat pause          # 暂停 1 小时（默认）
-/heartbeat pause 30m      # 暂停 30 分钟
-/heartbeat pause 2h       # 暂停 2 小时
-/heartbeat pause 7200     # 暂停 7200 秒
-/heartbeat resume         # 立即恢复
+/xt pause          # 暂停 1 小时（默认）
+/xt pause 30m      # 暂停 30 分钟
+/xt pause 2h       # 暂停 2 小时
+/xt pause 7200     # 暂停 7200 秒
+/xt resume         # 立即恢复
 ```
 
 ### 统计
@@ -262,7 +264,7 @@ agent_heartbeat:
 查看唤醒统计：
 
 ```bash
-/heartbeat stats
+/xt stats
 # > Heartbeat Stats for telegram/6211819157/DM:
 # >   Status: 🟢 Active
 # >   Total wakeups: 47
@@ -270,7 +272,7 @@ agent_heartbeat:
 # >   Last wakeup: 12m ago
 # >   Last error: (none)
 
-/heartbeat stats clear    # 重置计数器
+/xt stats clear    # 重置计数器
 ```
 
 ### 测试（干运行）
@@ -278,7 +280,7 @@ agent_heartbeat:
 检查所有条件但不实际触发：
 
 ```bash
-/heartbeat test
+/xt test
 # > Heartbeat Test for telegram/6211819157/DM:
 # >   Global enabled: True
 # >   Session enabled: True
@@ -319,7 +321,7 @@ pre_gateway_dispatch 钩子  ──►  启动 asyncio 循环（带锁）
 
 插件注册了：
 - **2 个钩子**：`pre_gateway_dispatch` — 绑定会话，`on_session_end` — 优雅关闭
-- **1 个斜杠命令**：`/heartbeat` — 手动触发及所有子命令
+- **1 个斜杠命令**：`/xt` — 手动触发及所有子命令
 
 ---
 

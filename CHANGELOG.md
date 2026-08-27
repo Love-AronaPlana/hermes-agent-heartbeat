@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.0 (2026-08-28)
+
+### 🔧 Changed
+- **Primary command renamed from `/heartbeat` to `/xt`** — the Hermes core
+  ships a built-in `/heartbeat` whose aliases include `/hb`, so a plugin
+  command named `/hb`/`/heartbeat` was being swallowed by the built-in handler
+  before the plugin hook could run. `/xt` has no collision.
+- `/heartbeat` and `/hb` are **also intercepted** and route to the same handler,
+  so old muscle memory and the built-in name keep working.
+- `/xt` is additionally registered via `register_command()` as a safety net
+  (the hook interception remains the primary path).
+- `_last_source` is now recorded before command interception, so intercepted
+  commands always see the correct conversation context.
+- 50 unit tests, all passing.
+
 ## 0.2.0 (2026-08-15)
 
 ### 🚀 New Features

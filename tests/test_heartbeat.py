@@ -290,59 +290,59 @@ class TestFormatSource:
 class TestCmdHeartbeat:
     def test_no_subcommand_no_active(self):
         mod = _load_plugin()
-        result = mod._cmd_heartbeat("")
+        result = mod._cmd_xt("")
         assert "context" in result
 
     def test_list_empty(self):
         mod = _load_plugin()
-        result = mod._cmd_heartbeat("list")
+        result = mod._cmd_xt("list")
         assert "set" in result
 
     def test_set_no_context(self):
         mod = _load_plugin()
         mod._last_source = None
-        result = mod._cmd_heartbeat("set")
+        result = mod._cmd_xt("set")
         assert "context" in result
 
     def test_unknown_subcommand(self):
         mod = _load_plugin()
-        result = mod._cmd_heartbeat("foobar")
+        result = mod._cmd_xt("foobar")
         assert "Unknown" in result
 
     def test_pause_no_context(self):
         mod = _load_plugin()
         mod._last_source = None
-        result = mod._cmd_heartbeat("pause")
+        result = mod._cmd_xt("pause")
         assert "context" in result
 
     def test_resume_no_context(self):
         mod = _load_plugin()
         mod._last_source = None
-        result = mod._cmd_heartbeat("resume")
+        result = mod._cmd_xt("resume")
         assert "context" in result
 
     def test_stats_no_context(self):
         mod = _load_plugin()
         mod._last_source = None
-        result = mod._cmd_heartbeat("stats")
+        result = mod._cmd_xt("stats")
         assert "context" in result
 
     def test_test_no_context(self):
         mod = _load_plugin()
         mod._last_source = None
-        result = mod._cmd_heartbeat("test")
+        result = mod._cmd_xt("test")
         assert "context" in result
 
     def test_config_no_context(self):
         mod = _load_plugin()
         mod._last_source = None
-        result = mod._cmd_heartbeat("config")
+        result = mod._cmd_xt("config")
         assert "context" in result
 
     def test_pause_duration_invalid(self):
         mod = _load_plugin()
         mod._last_source = object()  # non-None but won't match sessions
-        result = mod._cmd_heartbeat("pause 30x")
+        result = mod._cmd_xt("pause 30x")
         # Should return "not configured" since session not in sessions.json
         assert "not configured" in result
 
@@ -400,4 +400,5 @@ class TestRegister:
         assert len(ctx.hooks) == 2  # pre_gateway_dispatch + on_session_end
         assert ctx.hooks[0][0] == "pre_gateway_dispatch"
         assert ctx.hooks[1][0] == "on_session_end"
-        assert len(ctx.commands) == 0  # commands are intercepted via hook, not register_command
+        assert len(ctx.commands) == 1  # /xt registered as a normal command
+        assert ctx.commands[0][0] == "xt"
