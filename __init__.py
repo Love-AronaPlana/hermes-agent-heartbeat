@@ -349,11 +349,65 @@ def _clear_stats(key: str) -> None:
     _save_stats(stats)
 
 
+# ── loop lifecycle helpers ──────────────────────────────────────────────────────
+
+
+def _cancel_loop_for_key(key: str) -> None:
+    """Cancel and clean up the heartbeat loop for a specific session key.
+
+    Safe to call when no loop exists.  Removes the task from ``_tasks`` so
+    that ``_start_loop`` can immediately create a fresh one.  The cancelled
+    task's ``finally`` block is guarded by an identity check
+    (``_tasks.get(key) is current_task``) and will skip cleanup, preventing
+    it from wiping the new loop's state.
+    """
+    task = _tasks.pop(key, None)
+    if task is not None and not task.done():
+        task.cancel()
+    _triggers.pop(key, None)
+    _sources.pop(key, None)
+    _last_user_message.pop(key, None)
+
+
+def _start_loop(gateway: Any, source: Any, key: str) -> None:
+    """Start a heartbeat loop for *key* if one is not already running.
+
+    Always updates ``_sources[key]`` so the loop sees the latest routing
+    metadata, then schedules task creation under ``_start_lock``.
+    """
+    _sources[key] = source  # ensure source is fresh
+    task = _tasks.get(key)
+    if task is not None and not task.done():
+        return  # already running
+    try:
+        loop = asyncio.get_running_loop()
+
+        async def _start_locked() -> None:
+            async with _start_lock:
+                t = _tasks.get(key)
+                if t is not None and not t.done():
+                    return
+                _tasks[key] = asyncio.create_task(
+                    _run(gateway, source, key), name=f"agent-heartbeat:{key}"
+                )
+                logger.info("agent-heartbeat: bound to session %s", key)
+
+        loop.create_task(_start_locked())
+    except RuntimeError:
+        logger.warning("agent-heartbeat: no running event loop, skip binding %s", key)
+
+
 # ── heartbeat loop ─────────────────────────────────────────────────────────────
 
 
 async def _run(gateway: Any, source: Any, key: str) -> None:
-    """Heartbeat loop for a single session. Runs until disabled or cancelled."""
+    """Heartbeat loop for a single session. Runs until disabled or cancelled.
+
+    ``source`` is the *initial* routing metadata captured at loop-start time.
+    The loop reads the **latest** source from ``_sources[key]`` on every tick
+    so that it always routes wakeups to the current conversation, even after
+    ``/new`` rotated the underlying session.
+    """
     global _gateway_ref
     _gateway_ref = gateway
     _sources[key] = source
@@ -363,6 +417,7 @@ async def _run(gateway: Any, source: Any, key: str) -> None:
         event = asyncio.Event()
         _triggers[key] = event
 
+    this_task = asyncio.current_task()
     logger.info("agent-heartbeat: loop started for %s", key)
 
     try:
@@ -408,6 +463,9 @@ async def _run(gateway: Any, source: Any, key: str) -> None:
             except asyncio.TimeoutError:
                 pass
 
+            # ── read the LATEST source (may have been updated by hook) ──
+            current_source = _sources.get(key, source)
+
             # ── read prompt ──
             prompt = _prompt(sc)
             if not prompt:
@@ -416,7 +474,7 @@ async def _run(gateway: Any, source: Any, key: str) -> None:
                 continue
 
             # ── deliver wake ──
-            adapter = _adapter_for_source(gateway, source)
+            adapter = _adapter_for_source(gateway, current_source)
             running = getattr(gateway, "_running_agents", {})
             if adapter is None:
                 logger.warning("agent-heartbeat: %s no adapter for platform", key)
@@ -426,7 +484,7 @@ async def _run(gateway: Any, source: Any, key: str) -> None:
                 _track_stat(key, "skip", "agent busy")
             else:
                 try:
-                    await deliver_wake(adapter, text=prompt, source=source)
+                    await deliver_wake(adapter, text=prompt, source=current_source)
                     _track_stat(key, "wakeup")
                     logger.info("agent-heartbeat: delivered to %s%s", key, " [manual]" if is_manual else "")
                 except Exception as exc:
@@ -438,10 +496,14 @@ async def _run(gateway: Any, source: Any, key: str) -> None:
     except Exception:
         logger.exception("agent-heartbeat: loop failed for %s", key)
     finally:
-        _tasks.pop(key, None)
-        _sources.pop(key, None)
-        _triggers.pop(key, None)
-        _last_user_message.pop(key, None)
+        # Only clean up if THIS task is still the registered one.
+        # If _cancel_loop_for_key already popped us (e.g. /xt set replacing
+        # a stale loop) or a new loop took over, leave state intact.
+        if _tasks.get(key) is this_task:
+            _tasks.pop(key, None)
+            _triggers.pop(key, None)
+            _sources.pop(key, None)
+            _last_user_message.pop(key, None)
         logger.info("agent-heartbeat: loop ended for %s", key)
 
 
@@ -506,40 +568,39 @@ def _on_pre_gateway_dispatch(event: Any, gateway: Any, **_: Any) -> dict | None:
     if not _is_session_active(key):
         return
 
-    # Start the loop if not already running (with lock to prevent races)
-    task = _tasks.get(key)
-    if task is None or task.done():
-        # Use a fire-and-forget task to acquire the lock asynchronously
-        # since this hook is synchronous
-        async def _start_locked():
-            async with _start_lock:
-                t = _tasks.get(key)
-                if t is None or t.done():
-                    _tasks[key] = asyncio.create_task(
-                        _run(gateway, source, key), name=f"agent-heartbeat:{key}"
-                    )
-                    logger.info("agent-heartbeat: bound to session %s", key)
-
-        # Schedule the lock-acquisition coroutine
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(_start_locked())
-        except RuntimeError:
-            logger.warning("agent-heartbeat: no running event loop, skip binding %s", key)
+    # Start the loop if not already running — uses the shared helper that
+    # always refreshes _sources[key] first.
+    _start_loop(gateway, source, key)
 
 
 def _on_session_end(event: Any, **_: Any) -> None:
-    """Gracefully cancel all heartbeat tasks on session end."""
+    """Cancel heartbeat task(s) on session end.
+
+    If the event carries a ``session_key`` / ``key`` field, only that
+    session's loop is cancelled — other sessions continue running.
+    Otherwise (no key info), all loops are cancelled as a fallback.
+    """
     if not _tasks:
         return
-    count = len(_tasks)
-    for key, task in list(_tasks.items()):
-        task.cancel()
-    _tasks.clear()
-    _triggers.clear()
-    _sources.clear()
-    _last_user_message.clear()
-    logger.info("agent-heartbeat: cancelled %d tasks on session end", count)
+
+    # Try to extract a specific session key from the event
+    event_key = None
+    if isinstance(event, dict):
+        event_key = event.get("session_key") or event.get("key")
+    else:
+        for attr in ("session_key", "key"):
+            event_key = getattr(event, attr, None)
+            if event_key:
+                break
+
+    if event_key:
+        _cancel_loop_for_key(event_key)
+        logger.info("agent-heartbeat: cancelled loop for %s on session end", event_key)
+    else:
+        count = len(_tasks)
+        for key, task in list(_tasks.items()):
+            _cancel_loop_for_key(key)
+        logger.info("agent-heartbeat: cancelled %d tasks on session end (no key in event)", count)
 
 
 # ── slash commands ─────────────────────────────────────────────────────────────
@@ -637,6 +698,9 @@ def _cmd_xt(raw_args: str) -> str | None:
         key = _get_current_key()
         if key is None:
             return "❌ No session context. Send a message first."
+        # Cancel any stale loop from a previous session so the next
+        # message starts a fresh loop with current routing metadata.
+        _cancel_loop_for_key(key)
         sessions = _load_sessions()
         defaults = _session_defaults()
         if key in sessions:
@@ -660,6 +724,8 @@ def _cmd_xt(raw_args: str) -> str | None:
             sessions[key]["enabled"] = False
             sessions[key].pop("paused_until", None)
             _save_sessions(sessions)
+            # Actually cancel the running loop, not just flip the flag
+            _cancel_loop_for_key(key)
             logger.info("agent-heartbeat: disabled for %s via /xt unset", key)
             return f"✅ Heartbeat disabled for {_format_source(key)}."
         return "❌ Heartbeat not configured for this session."
