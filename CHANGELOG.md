@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.1 (2026-08-28)
+
+### 🐛 Fixed
+- **Command replies now actually deliver** — `adapter.send()` is an async
+  method but was being called synchronously, which created a coroutine that
+  never ran. Command responses (e.g. `/xt status`) were silently dropped.
+  Now scheduled via `loop.create_task()` on the running event loop.
+- Added a warning log when the adapter lookup returns `None` so silent reply
+  failures are visible in gateway logs instead of disappearing.
+
 ## 0.3.0 (2026-08-28)
 
 ### 🔧 Changed
