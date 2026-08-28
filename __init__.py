@@ -15,6 +15,7 @@ License: MIT
 from __future__ import annotations
 
 import asyncio
+import time
 import json
 import logging
 import math
@@ -40,6 +41,12 @@ _DEFAULT_PAUSE_DURATION = 3600  # 1 hour default pause
 _SESSIONS_FILE = Path("~/.hermes/heartbeat/sessions.json").expanduser()
 _STATS_FILE = Path("~/.hermes/heartbeat/stats.json").expanduser()
 
+# Bump this when the session key schema or config layout changes.
+# On plugin upgrade, _load_sessions detects the mismatch and clears
+# stale per-session config so users get a fresh start instead of
+# silently inheriting an old session's heartbeat.
+_SESSIONS_FORMAT_VERSION = "0.3.3"
+
 # ── module state ───────────────────────────────────────────────────────────────
 
 _tasks: dict[str, asyncio.Task] = {}
@@ -64,12 +71,27 @@ def _global_config() -> dict[str, Any]:
 
 
 def _load_sessions() -> dict[str, dict[str, Any]]:
-    """Load per-session config from ``sessions.json``."""
+    """Load per-session config from ``sessions.json``.
+
+    If the stored ``_version`` field doesn't match the running plugin
+    version (``_SESSIONS_FORMAT_VERSION``), all session configs are
+    cleared so the user starts fresh after an upgrade.
+    """
     try:
         if _SESSIONS_FILE.exists():
             with _SESSIONS_FILE.open(encoding="utf-8") as f:
                 data = json.load(f)
-            return data if isinstance(data, dict) else {}
+            if not isinstance(data, dict):
+                return {}
+            stored_version = data.pop("_version", None)
+            if stored_version != _SESSIONS_FORMAT_VERSION:
+                logger.info(
+                    "agent-heartbeat: sessions.json version mismatch "
+                    "(file=%s, code=%s) — clearing stale config",
+                    stored_version, _SESSIONS_FORMAT_VERSION,
+                )
+                return {}
+            return data
     except (json.JSONDecodeError, OSError):
         logger.exception("agent-heartbeat: failed to load sessions.json")
     return {}
@@ -79,8 +101,10 @@ def _save_sessions(data: dict[str, dict[str, Any]]) -> None:
     """Save per-session config to ``sessions.json``."""
     _SESSIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
     try:
+        payload = dict(data)
+        payload["_version"] = _SESSIONS_FORMAT_VERSION
         with _SESSIONS_FILE.open("w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+            json.dump(payload, f, indent=2, ensure_ascii=False)
     except OSError:
         logger.exception("agent-heartbeat: failed to save sessions.json")
 
@@ -453,15 +477,34 @@ async def _run(gateway: Any, source: Any, key: str) -> None:
                 await asyncio.sleep(min(pause_remaining, _interval(sc)))
                 continue
 
-            # ── wait for interval OR manual trigger ──
+            # ── wait until *interval* has elapsed since last user message ──
+            # The countdown resets every time the user sends a message, so
+            # heartbeat fires ~interval after the user goes quiet, not on a
+            # fixed cadence independent of user activity.
             is_manual = False
-            try:
-                await asyncio.wait_for(event.wait(), timeout=_interval(sc))
-                event.clear()
-                is_manual = True
-                logger.info("agent-heartbeat: %s manual trigger fired", key)
-            except asyncio.TimeoutError:
-                pass
+            interval = _interval(sc)
+            while True:
+                last_msg = _last_user_message.get(key, 0.0)
+                now = time.time()
+                if last_msg > 0.0:
+                    remaining = max(0.0, interval - (now - last_msg))
+                else:
+                    remaining = interval  # no user message yet, wait full interval
+
+                if remaining <= 0:
+                    break  # enough time has elapsed since user's last message
+
+                # Sleep in short chunks so manual triggers (/xt) are responsive.
+                try:
+                    await asyncio.wait_for(
+                        event.wait(), timeout=min(remaining, 5.0),
+                    )
+                    event.clear()
+                    is_manual = True
+                    logger.info("agent-heartbeat: %s manual trigger fired", key)
+                    break
+                except asyncio.TimeoutError:
+                    pass  # check remaining again (may have been reset by hook)
 
             # ── read the LATEST source (may have been updated by hook) ──
             current_source = _sources.get(key, source)
