@@ -471,11 +471,21 @@ def _on_pre_gateway_dispatch(event: Any, gateway: Any, **_: Any) -> dict | None:
         remainder = remainder.strip()
         response_text = _cmd_xt(remainder)
         if response_text:
-            # Send reply via adapter, then skip built-in dispatch
+            # Send reply via adapter, then skip built-in dispatch.
+            # adapter.send is async — schedule it on the running event loop
+            # instead of calling synchronously (which silently drops the
+            # coroutine without delivering the message).
             try:
                 adapter = _adapter_for_source(gateway, source)
                 if adapter:
-                    adapter.send(str(source.chat_id), response_text)
+                    try:
+                        loop = asyncio.get_running_loop()
+                        loop.create_task(adapter.send(str(source.chat_id), response_text))
+                    except RuntimeError:
+                        logger.warning("agent-heartbeat: no running event loop, cannot send response")
+                else:
+                    logger.warning("agent-heartbeat: adapter is None for platform=%s chat=%s",
+                                   getattr(source, "platform", "?"), getattr(source, "chat_id", "?"))
             except Exception:
                 logger.warning("agent-heartbeat: failed to send command response", exc_info=True)
             return {"action": "skip", "reason": "agent-heartbeat handled command"}
