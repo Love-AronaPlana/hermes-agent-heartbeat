@@ -38,6 +38,17 @@ _DEFAULT_INTERVAL = 900.0
 _DEFAULT_JITTER = 0.0
 _DEFAULT_PAUSE_DURATION = 3600  # 1 hour default pause
 
+# Default prompt text used when a session has no per-session prompt_file,
+# prompt_files, or inline prompt configured.  Kept short and conversational
+# so a freshly-installed heartbeat is immediately useful without forcing
+# the user to author a prompt file.  Users can still override globally
+# (config.yaml: ``agent_heartbeat.default_prompt``) or per-session
+# (``/xt set prompt=...``).
+_DEFAULT_PROMPT = (
+    "[Heartbeat 唤醒] 继续我们刚才的对话。如果用户没有新内容，"
+    "就简单汇报一下当前相关状态并继续等用户输入。"
+)
+
 _SESSIONS_FILE = Path("~/.hermes/heartbeat/sessions.json").expanduser()
 _STATS_FILE = Path("~/.hermes/heartbeat/stats.json").expanduser()
 
@@ -111,13 +122,23 @@ def _save_sessions(data: dict[str, dict[str, Any]]) -> None:
 
 
 def _session_defaults() -> dict[str, Any]:
-    """Return default values for a session config."""
+    """Return default values for a session config.
+
+    The inline ``prompt`` default is the friendly nudge that ships the first
+    time someone enables heartbeat on a fresh install. The user can override
+    it per-session (via ``/xt set prompt=...``) or per-key globally
+    (``agent_heartbeat.default_prompt`` in config.yaml). We deliberately do
+    NOT require a ``prompt_file`` — pointing at a missing file was the
+    silent-failure mode that left wakeups at ``empty prompt, skip``
+    forever.
+    """
     g = _global_config()
     return {
         "enabled": True,
         "interval": float(g.get("default_interval", _DEFAULT_INTERVAL)),
         "prompt_file": str(g.get("default_prompt_file", "") or ""),
         "prompt_files": list(g.get("default_prompt_files", []) or []),
+        "prompt": str(g.get("default_prompt", "") or _DEFAULT_PROMPT),
         "active_start": "",
         "active_end": "",
         "utc_offset": "+8",
@@ -158,12 +179,32 @@ def _format_source(key: str) -> str:
 
 
 def _is_session_active(session_key: str) -> bool:
-    """Check if a session is configured and enabled."""
+    """Check if a session is configured and enabled.
+
+    A session is active if EITHER:
+      * the global master switch is off (caller returned False before any
+        per-session lookup), or
+      * the per-session config has ``enabled=True``, or
+      * the per-session config is missing AND the user has never explicitly
+        disabled it for this key. We must NOT default to False on a missing
+        config: when ``sessions.json`` is empty (first run, post-upgrade
+        version mismatch, fresh install) the loop would silently never
+        start, even though the default in ``_session_defaults`` is True.
+        We instead return True when the key is absent and the user has not
+        recorded an explicit ``enabled=False`` for it.
+    """
     g = _global_config()
     if not bool(g.get("enabled", True)):
         return False
     sessions = _load_sessions()
-    s = sessions.get(session_key, {})
+    s = sessions.get(session_key)
+    if s is None:
+        # No explicit config for this session yet — treat as active by
+        # default so heartbeat actually starts on a clean install or
+        # after the version-mismatch wipe. The opt-out is still local:
+        # setting ``enabled: false`` for the key in sessions.json
+        # short-circuits this branch.
+        return True
     return bool(s.get("enabled", False))
 
 
