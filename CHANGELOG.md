@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.2 (2026-08-28)
+
+### 🔧 Changed
+- **Global `enabled` defaults to `True`** — when `agent_heartbeat` is absent
+  from config.yaml or the `enabled` key is omitted, heartbeat is ON by
+  default. This prevents silent no-ops after a fresh install. To disable,
+  explicitly set `enabled: false`.
+- **`/xt set` returns error when globally disabled** — instead of silently
+  writing a session that will never start, the command now tells the user
+  to enable `agent_heartbeat.enabled: true` in config.yaml first.
+- **Source refreshed on every user message** — the heartbeat wake source is
+  updated each time a user message arrives, so wakeups after `/new` use the
+  latest routing metadata instead of a stale reference from loop startup.
+
 ## 0.3.1 (2026-08-28)
 
 ### 🐛 Fixed

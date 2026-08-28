@@ -135,7 +135,7 @@ def _format_source(key: str) -> str:
 def _is_session_active(session_key: str) -> bool:
     """Check if a session is configured and enabled."""
     g = _global_config()
-    if not bool(g.get("enabled", False)):
+    if not bool(g.get("enabled", True)):
         return False
     sessions = _load_sessions()
     s = sessions.get(session_key, {})
@@ -369,7 +369,7 @@ async def _run(gateway: Any, source: Any, key: str) -> None:
         while True:
             # ── check global master switch ──
             g = _global_config()
-            if not bool(g.get("enabled", False)):
+            if not bool(g.get("enabled", True)):
                 logger.info("agent-heartbeat: master disabled, stopping %s", key)
                 return
 
@@ -491,7 +491,7 @@ def _on_pre_gateway_dispatch(event: Any, gateway: Any, **_: Any) -> dict | None:
             return {"action": "skip", "reason": "agent-heartbeat handled command"}
 
     g = _global_config()
-    if not bool(g.get("enabled", False)):
+    if not bool(g.get("enabled", True)):
         return
 
     key = _session_key(source)
@@ -499,6 +499,8 @@ def _on_pre_gateway_dispatch(event: Any, gateway: Any, **_: Any) -> dict | None:
     # Only track user-initiated messages for idle detection
     if _is_user_message(event):
         _last_user_message[key] = datetime.now().timestamp()
+        # Keep source fresh so wake uses the latest routing metadata
+        _sources[key] = source
 
     # Check if this session is configured and enabled
     if not _is_session_active(key):
@@ -624,6 +626,14 @@ def _cmd_xt(raw_args: str) -> str | None:
 
     # ── /xt set ─────────────────────────────────────────────────────
     if subcmd == "set":
+        g = _global_config()
+        if g.get("enabled") is False:
+            return (
+                "❌ Heartbeat is globally disabled. "
+                "Enable it in config.yaml:\n"
+                "  agent_heartbeat:\n"
+                "    enabled: true"
+            )
         key = _get_current_key()
         if key is None:
             return "❌ No session context. Send a message first."
@@ -765,7 +775,7 @@ def _cmd_xt(raw_args: str) -> str | None:
         g = _global_config()
 
         lines = [f"**Heartbeat Test for {_format_source(key)}:**"]
-        lines.append(f"  Global enabled: {bool(g.get('enabled', False))}")
+        lines.append(f"  Global enabled: {bool(g.get('enabled', True))}")
         lines.append(f"  Session enabled: {bool(sc.get('enabled', False))}")
         lines.append(f"  Interval: {int(sc.get('interval', _DEFAULT_INTERVAL))}s")
 

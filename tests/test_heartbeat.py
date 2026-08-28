@@ -137,9 +137,11 @@ class TestSessionsPersistence:
             loaded = mod._load_sessions()
             assert loaded == data
 
-    def test_load_missing_file(self):
+    def test_load_missing_file(self, tmp_path):
         mod = _load_plugin()
-        assert mod._load_sessions() == {}
+        test_file = tmp_path / "sessions.json"
+        with patch.object(mod, "_SESSIONS_FILE", test_file):
+            assert mod._load_sessions() == {}
 
 
 class TestStatsPersistence:
@@ -293,10 +295,12 @@ class TestCmdHeartbeat:
         result = mod._cmd_xt("")
         assert "context" in result
 
-    def test_list_empty(self):
+    def test_list_empty(self, tmp_path):
         mod = _load_plugin()
-        result = mod._cmd_xt("list")
-        assert "set" in result
+        test_file = tmp_path / "sessions.json"
+        with patch.object(mod, "_SESSIONS_FILE", test_file):
+            result = mod._cmd_xt("list")
+            assert "set" in result
 
     def test_set_no_context(self):
         mod = _load_plugin()
