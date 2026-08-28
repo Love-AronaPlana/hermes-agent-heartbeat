@@ -45,7 +45,7 @@ _STATS_FILE = Path("~/.hermes/heartbeat/stats.json").expanduser()
 # On plugin upgrade, _load_sessions detects the mismatch and clears
 # stale per-session config so users get a fresh start instead of
 # silently inheriting an old session's heartbeat.
-_SESSIONS_FORMAT_VERSION = "0.3.3"
+_SESSIONS_FORMAT_VERSION = "0.4.0"
 
 # ── module state ───────────────────────────────────────────────────────────────
 
@@ -56,6 +56,7 @@ _gateway_ref: Any = None  # last seen gateway (for slash command)
 _sources: dict[str, Any] = {}  # key -> SessionSource for manual trigger
 _last_source: Any = None  # source of the last incoming user message
 _start_lock: asyncio.Lock = asyncio.Lock()  # prevent race on loop creation
+_after_wake: dict[str, bool] = {}  # key -> True if heartbeat just fired, wait for next user msg
 
 # ── config helpers ─────────────────────────────────────────────────────────────
 
@@ -391,6 +392,7 @@ def _cancel_loop_for_key(key: str) -> None:
     _triggers.pop(key, None)
     _sources.pop(key, None)
     _last_user_message.pop(key, None)
+    _after_wake.pop(key, None)
 
 
 def _start_loop(gateway: Any, source: Any, key: str) -> None:
@@ -477,13 +479,45 @@ async def _run(gateway: Any, source: Any, key: str) -> None:
                 await asyncio.sleep(min(pause_remaining, _interval(sc)))
                 continue
 
-            # ── wait until *interval* has elapsed since last user message ──
-            # The countdown resets every time the user sends a message, so
-            # heartbeat fires ~interval after the user goes quiet, not on a
-            # fixed cadence independent of user activity.
+            # ── wait for heartbeat ──
+            # 1) If heartbeat just fired, wait for next user message.
+            # 2) Wait for agent to finish processing (user msg or wake).
+            # 3) Count down from _last_user_message.
             is_manual = False
             interval = _interval(sc)
+            current_source = _sources.get(key, source)  # refresh before countdown
             while True:
+                # After a heartbeat wake, do NOT restart the countdown —
+                # wait for the next user message to reset the timer.
+                if _after_wake.get(key, False):
+                    try:
+                        await asyncio.wait_for(event.wait(), timeout=5.0)
+                        event.clear()
+                        is_manual = True
+                        break  # manual trigger fires immediately
+                    except asyncio.TimeoutError:
+                        continue  # re-check _after_wake
+
+                # Wait for agent to finish processing (user msg or wake).
+                # Uses the gateway's session key format, not the plugin's
+                # shorter key, to correctly match _running_agents entries.
+                current_source = _sources.get(key, source)  # refresh during wait
+                gw_key = ""
+                try:
+                    gw_key = gateway._session_key_for_source(current_source)
+                except Exception:
+                    pass
+                running = getattr(gateway, "_running_agents", {})
+                if gw_key and gw_key in running:
+                    try:
+                        await asyncio.wait_for(event.wait(), timeout=2.0)
+                        event.clear()
+                        is_manual = True
+                        break  # manual trigger fires immediately
+                    except asyncio.TimeoutError:
+                        continue  # re-check if agent is still busy
+
+                # Agent is idle — countdown from last user message.
                 last_msg = _last_user_message.get(key, 0.0)
                 now = time.time()
                 if last_msg > 0.0:
@@ -501,7 +535,6 @@ async def _run(gateway: Any, source: Any, key: str) -> None:
                     )
                     event.clear()
                     is_manual = True
-                    logger.info("agent-heartbeat: %s manual trigger fired", key)
                     break
                 except asyncio.TimeoutError:
                     pass  # check remaining again (may have been reset by hook)
@@ -518,16 +551,13 @@ async def _run(gateway: Any, source: Any, key: str) -> None:
 
             # ── deliver wake ──
             adapter = _adapter_for_source(gateway, current_source)
-            running = getattr(gateway, "_running_agents", {})
             if adapter is None:
                 logger.warning("agent-heartbeat: %s no adapter for platform", key)
                 _track_stat(key, "error", "no adapter")
-            elif key in running:
-                logger.info("agent-heartbeat: %s agent busy, skip", key)
-                _track_stat(key, "skip", "agent busy")
             else:
                 try:
                     await deliver_wake(adapter, text=prompt, source=current_source)
+                    _after_wake[key] = True
                     _track_stat(key, "wakeup")
                     logger.info("agent-heartbeat: delivered to %s%s", key, " [manual]" if is_manual else "")
                 except Exception as exc:
@@ -547,6 +577,7 @@ async def _run(gateway: Any, source: Any, key: str) -> None:
             _triggers.pop(key, None)
             _sources.pop(key, None)
             _last_user_message.pop(key, None)
+            _after_wake.pop(key, None)
         logger.info("agent-heartbeat: loop ended for %s", key)
 
 
@@ -604,6 +635,7 @@ def _on_pre_gateway_dispatch(event: Any, gateway: Any, **_: Any) -> dict | None:
     # Only track user-initiated messages for idle detection
     if _is_user_message(event):
         _last_user_message[key] = datetime.now().timestamp()
+        _after_wake[key] = False  # allow heartbeat to fire again after user msg
         # Keep source fresh so wake uses the latest routing metadata
         _sources[key] = source
 
@@ -616,34 +648,39 @@ def _on_pre_gateway_dispatch(event: Any, gateway: Any, **_: Any) -> dict | None:
     _start_loop(gateway, source, key)
 
 
-def _on_session_end(event: Any, **_: Any) -> None:
-    """Cancel heartbeat task(s) on session end.
+def _on_session_finalize(**kwargs: Any) -> None:
+    """Cancel all heartbeat loops on session finalization (/new, /reset, shutdown).
 
-    If the event carries a ``session_key`` / ``key`` field, only that
-    session's loop is cancelled — other sessions continue running.
-    Otherwise (no key info), all loops are cancelled as a fallback.
+    ``on_session_finalize`` fires when ``_finalize_session_off_loop`` runs
+    with reason ``"new_session"`` (slash_commands._handle_reset_command) or
+    on gateway shutdown.  The payload carries ``session_id``, ``platform``,
+    ``reason``, ``old_session_id``, ``new_session_id`` — but NOT the
+    plugin-level ``platform:chat_id:thread`` key, so we cancel ALL active
+    loops.  The next user message in any configured chat will re-start its
+    loop via ``_on_pre_gateway_dispatch`` → ``_start_loop``.
     """
     if not _tasks:
         return
+    reason = kwargs.get("reason", "")
+    count = len(_tasks)
+    for k in list(_tasks.keys()):
+        _cancel_loop_for_key(k)
+    logger.info(
+        "agent-heartbeat: cancelled %d loops on session finalize (reason=%s)",
+        count, reason,
+    )
 
-    # Try to extract a specific session key from the event
-    event_key = None
-    if isinstance(event, dict):
-        event_key = event.get("session_key") or event.get("key")
-    else:
-        for attr in ("session_key", "key"):
-            event_key = getattr(event, attr, None)
-            if event_key:
-                break
 
-    if event_key:
-        _cancel_loop_for_key(event_key)
-        logger.info("agent-heartbeat: cancelled loop for %s on session end", event_key)
-    else:
-        count = len(_tasks)
-        for key, task in list(_tasks.items()):
-            _cancel_loop_for_key(key)
-        logger.info("agent-heartbeat: cancelled %d tasks on session end (no key in event)", count)
+def _on_session_end(**kwargs: Any) -> None:
+    """Log agent turn finalization.  Per hooks.md this fires at each turn
+    completion (completed/failed/interrupted).  We intentionally do NOT
+    cancel loops here — that would kill the heartbeat after every wake.
+    Session-boundary cancellation is handled by ``_on_session_finalize``.
+    """
+    session_id = kwargs.get("session_id", "")
+    completed = kwargs.get("completed", False)
+    if completed:
+        logger.debug("agent-heartbeat: turn finalized for session %s", session_id)
 
 
 # ── slash commands ─────────────────────────────────────────────────────────────
@@ -1024,6 +1061,11 @@ def _cmd_xt(raw_args: str) -> str | None:
 
 def register(ctx) -> None:
     ctx.register_hook("pre_gateway_dispatch", _on_pre_gateway_dispatch)
+    # on_session_finalize fires on /new, /reset, and gateway shutdown —
+    # cancel all heartbeat loops so stale wakes never land in a reset session.
+    ctx.register_hook("on_session_finalize", _on_session_finalize)
+    # on_session_end fires at each turn finalization (agent done replying).
+    # Kept as a lightweight observer; the heartbeat loop does NOT depend on it.
     ctx.register_hook("on_session_end", _on_session_end)
     # Primary interception is the pre_gateway_dispatch hook (see
     # _on_pre_gateway_dispatch), which fires before built-in dispatch and
