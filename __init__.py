@@ -52,11 +52,139 @@ _DEFAULT_PROMPT = (
 _SESSIONS_FILE = Path("~/.hermes/heartbeat/sessions.json").expanduser()
 _STATS_FILE = Path("~/.hermes/heartbeat/stats.json").expanduser()
 
+# ── sessions.json schema versioning ────────────────────────────────────────────
+#
+# _SESSIONS_FORMAT_VERSION is the CURRENT schema version.  When the stored
+# file carries an older _version, _load_sessions() migrates it forward one
+# step at a time through _SCHEMA_MIGRATIONS instead of wiping the user's
+# configuration.  Every release that changes the schema MUST:
+#   1. bump _SESSIONS_FORMAT_VERSION,
+#   2. append a (old_version, new_version, migrate_fn) tuple to
+#      _SCHEMA_MIGRATIONS (in chronological order),
+#   3. make the migrate_fn idempotent and pure (no I/O).
+#
+# Migration steps (old -> new, applied in listed order):
+#   pre-0.3.3/legacy -> 0.3.3 : normalize the file shape (no-op for
+#       0.3.3-era files; anything without _version is treated as legacy).
+#   0.3.3 -> 0.4.0             : v0.4.0 renamed no config keys — the
+#       session-key shape stayed "<platform>:<chat_id>:<thread>", so the
+#       step only normalizes entries to the 0.4.0 defaults.
+#   0.4.0 -> 0.4.1             : v0.4.1 flipped default `enabled` to True
+#       and added the inline fallback prompt.  Entries that didn't set
+#       `enabled` explicitly get it filled; entries that were explicitly
+#       disabled stay disabled.
+#
+_OLDEST_SCHEMA_VERSION = "0.0.0"
+
+_SCHEMA_MIGRATIONS: list[tuple[str, str, Any]] = [
+    # (old, new, migrate_fn)
+    ("0.0.0", "0.3.3", lambda d: _migrate_legacy(d)),
+    ("0.3.3", "0.4.0", lambda d: _migrate_033_to_040(d)),
+    ("0.4.0", "0.4.1", lambda d: _migrate_040_to_041(d)),
+    ("0.4.1", "0.4.2", lambda d: _migrate_041_to_042(d)),
+]
+
+
+def _ver_at_least(version: str, target: str) -> bool:
+    """Compare dotted version strings: is ``version`` >= ``target``?"""
+    try:
+        v = tuple(int(p) for p in str(version).split("."))
+        t = tuple(int(p) for p in str(target).split("."))
+    except (ValueError, TypeError):
+        return False
+    return v >= t
+
+
+def _migrate_legacy(data: dict[str, Any]) -> dict[str, Any]:
+    """Normalize a pre-0.3.3 / versionless file into the 0.3.3 shape.
+
+    Older files may have omitted ``_version`` entirely or stored entries
+    whose values were plain dicts.  We keep every entry (so nothing is
+    lost), but strip any ``_version`` key that might have slipped in and
+    ensure per-session values are dicts.
+    """
+    result: dict[str, Any] = {}
+    for key, value in data.items():
+        if key == "_version":
+            continue
+        if isinstance(value, dict):
+            result[key] = dict(value)
+        else:
+            # e.g. "telegram:123:" -> true (legacy boolean form)
+            result[key] = {"enabled": bool(value)}
+    return result
+
+
+def _migrate_033_to_040(data: dict[str, Any]) -> dict[str, Any]:
+    """0.3.3 -> 0.4.0.
+
+    0.4.0 changed defaults but kept the same per-session key format and
+    config keys.  Fill in any keys missing from each entry with the
+    0.4.0-era defaults, preserving what the user explicitly set.
+    """
+    result: dict[str, Any] = {}
+    for key, entry in data.items():
+        if not isinstance(entry, dict):
+            entry = {"enabled": bool(entry)}
+        merged = dict(entry)
+        merged.setdefault("enabled", True)
+        merged.setdefault("interval", _DEFAULT_INTERVAL)
+        merged.setdefault("prompt_file", "")
+        merged.setdefault("prompt_files", [])
+        merged.setdefault("active_start", "")
+        merged.setdefault("active_end", "")
+        merged.setdefault("utc_offset", "+8")
+        result[key] = merged
+    return result
+
+
+def _migrate_040_to_041(data: dict[str, Any]) -> dict[str, Any]:
+    """0.4.0 -> 0.4.1.
+
+    0.4.1 added an inline fallback ``prompt`` and kept `enabled` default
+    True.  Explicitly-disabled entries stay disabled; everything else is
+    left untouched (the new prompt default is picked up by
+    ``_session_defaults`` at runtime, so we don't need to write it here).
+    """
+    result: dict[str, Any] = {}
+    for key, entry in data.items():
+        if not isinstance(entry, dict):
+            entry = {"enabled": bool(entry)}
+        merged = dict(entry)
+        merged.setdefault("enabled", True)
+        result[key] = merged
+    return result
+
+
+def _migrate_041_to_042(data: dict[str, Any]) -> dict[str, Any]:
+    """0.4.1 -> 0.4.2.
+
+    0.4.2 introduces the version-migration framework itself; no config
+    keys changed.  This step exists only so the migration chain is
+    explicit and future upgrades have a well-defined baseline.  Entries
+    are normalized (dict-ified) but otherwise preserved verbatim.
+    """
+    result: dict[str, Any] = {}
+    for key, entry in data.items():
+        if not isinstance(entry, dict):
+            entry = {"enabled": bool(entry)}
+        result[key] = dict(entry)
+    return result
+
 # Bump this when the session key schema or config layout changes.
 # On plugin upgrade, _load_sessions detects the mismatch and clears
 # stale per-session config so users get a fresh start instead of
 # silently inheriting an old session's heartbeat.
-_SESSIONS_FORMAT_VERSION = "0.4.0"
+#
+# v0.4.1: defaults flipped to enabled=True with an inline fallback
+# prompt so the loop actually starts on a fresh install (v0.4.0 had
+# the same shape but sessions.json was empty post-version-mismatch,
+# so _is_session_active returned False and the loop never started).
+#
+# v0.4.2: introduced the schema-migration framework.  Older files are
+# now upgraded forward through _SCHEMA_MIGRATIONS instead of wiped, so
+# a stale sessions.json keeps the user's enabled/interval/prompt config.
+_SESSIONS_FORMAT_VERSION = "0.4.2"
 
 # ── module state ───────────────────────────────────────────────────────────────
 
@@ -85,9 +213,12 @@ def _global_config() -> dict[str, Any]:
 def _load_sessions() -> dict[str, dict[str, Any]]:
     """Load per-session config from ``sessions.json``.
 
-    If the stored ``_version`` field doesn't match the running plugin
-    version (``_SESSIONS_FORMAT_VERSION``), all session configs are
-    cleared so the user starts fresh after an upgrade.
+    If the stored ``_version`` field is older than the running plugin
+    version, the config is **migrated forward** through each schema
+    version's migration step rather than being cleared.  Unknown/legacy
+    versions (or a file missing ``_version`` entirely) are treated as
+    pre-0.3.3 and migrated from there.  Only a genuinely corrupt file
+    (unparseable JSON) falls back to ``{}``.
     """
     try:
         if _SESSIONS_FILE.exists():
@@ -95,14 +226,20 @@ def _load_sessions() -> dict[str, dict[str, Any]]:
                 data = json.load(f)
             if not isinstance(data, dict):
                 return {}
-            stored_version = data.pop("_version", None)
+            stored_version = data.pop("_version", None) or _OLDEST_SCHEMA_VERSION
             if stored_version != _SESSIONS_FORMAT_VERSION:
-                logger.info(
-                    "agent-heartbeat: sessions.json version mismatch "
-                    "(file=%s, code=%s) — clearing stale config",
-                    stored_version, _SESSIONS_FORMAT_VERSION,
-                )
-                return {}
+                # Walk each schema upgrade in order.
+                for old, new, migrate in _SCHEMA_MIGRATIONS:
+                    if _ver_at_least(stored_version, new):
+                        continue
+                    data = migrate(data)
+                    stored_version = new
+                    logger.info(
+                        "agent-heartbeat: sessions.json migrated %s -> %s",
+                        old, new,
+                    )
+                # Persist the upgraded config so the next load is a no-op.
+                _save_sessions(data)
             return data
     except (json.JSONDecodeError, OSError):
         logger.exception("agent-heartbeat: failed to load sessions.json")
