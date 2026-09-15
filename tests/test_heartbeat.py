@@ -154,9 +154,10 @@ class TestStatsPersistence:
             loaded = mod._load_stats()
             assert loaded == data
 
-    def test_load_missing_file(self):
+    def test_load_missing_file(self, tmp_path):
         mod = _load_plugin()
-        assert mod._load_stats() == {}
+        with patch.object(mod, "_STATS_FILE", tmp_path / "missing-stats.json"):
+            assert mod._load_stats() == {}
 
     def test_track_stat(self, tmp_path):
         mod = _load_plugin()
@@ -401,8 +402,8 @@ class TestRegister:
         ctx = FakeCtx()
         mod.register(ctx)
 
-        assert len(ctx.hooks) == 2  # pre_gateway_dispatch + on_session_end
-        assert ctx.hooks[0][0] == "pre_gateway_dispatch"
-        assert ctx.hooks[1][0] == "on_session_end"
+        assert [name for name, _ in ctx.hooks] == [
+            "pre_gateway_dispatch", "on_session_finalize", "on_session_end"
+        ]
         assert len(ctx.commands) == 1  # /xt registered as a normal command
         assert ctx.commands[0][0] == "xt"

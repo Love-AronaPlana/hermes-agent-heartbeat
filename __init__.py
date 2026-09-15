@@ -184,7 +184,7 @@ def _migrate_041_to_042(data: dict[str, Any]) -> dict[str, Any]:
 # v0.4.2: introduced the schema-migration framework.  Older files are
 # now upgraded forward through _SCHEMA_MIGRATIONS instead of wiped, so
 # a stale sessions.json keeps the user's enabled/interval/prompt config.
-_SESSIONS_FORMAT_VERSION = "0.4.2"
+_SESSIONS_FORMAT_VERSION = "0.4.3"
 
 # ── module state ───────────────────────────────────────────────────────────────
 
@@ -727,6 +727,25 @@ async def _run(gateway: Any, source: Any, key: str) -> None:
                 await asyncio.sleep(_interval(sc))
                 continue
 
+            # ── resolve the CURRENT gateway session ──
+            # The platform source is stable across /new, while the gateway session
+            # id is not.  Passing only ``source`` lets deliver_wake consult a stale
+            # routing entry on some gateway versions and resurrect the pre-/new
+            # context.  Resolve the canonical id immediately before every wake.
+            session_id = ""
+            try:
+                gateway_key = gateway._session_key_for_source(current_source)
+                store = getattr(gateway, "session_store", None)
+                if store is not None:
+                    session_id = str(store.peek_session_id(gateway_key) or "")
+            except Exception:
+                logger.debug("agent-heartbeat: current session lookup failed for %s", key, exc_info=True)
+            if not session_id:
+                logger.warning("agent-heartbeat: no current session id for %s, skip wake", key)
+                _track_stat(key, "error", "no current session id")
+                await asyncio.sleep(_interval(sc))
+                continue
+
             # ── deliver wake ──
             adapter = _adapter_for_source(gateway, current_source)
             if adapter is None:
@@ -734,7 +753,9 @@ async def _run(gateway: Any, source: Any, key: str) -> None:
                 _track_stat(key, "error", "no adapter")
             else:
                 try:
-                    await deliver_wake(adapter, text=prompt, source=current_source)
+                    await deliver_wake(
+                        adapter, text=prompt, session_id=session_id, source=current_source
+                    )
                     _after_wake[key] = True
                     _track_stat(key, "wakeup")
                     logger.info("agent-heartbeat: delivered to %s%s", key, " [manual]" if is_manual else "")
