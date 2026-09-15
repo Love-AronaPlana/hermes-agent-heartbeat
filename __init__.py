@@ -45,8 +45,9 @@ _DEFAULT_PAUSE_DURATION = 3600  # 1 hour default pause
 # (config.yaml: ``agent_heartbeat.default_prompt``) or per-session
 # (``/xt set prompt=...``).
 _DEFAULT_PROMPT = (
-    "[Heartbeat 唤醒] 继续我们刚才的对话。如果用户没有新内容，"
-    "就简单汇报一下当前相关状态并继续等用户输入。"
+    "[Heartbeat 唤醒] 检查我们之前的对话、当前任务和已有计划，主动找出尚未完成或可以推进的事项并直接开始处理。"
+    "优先完成用户已经明确提出但尚未完成的任务；如果没有明确待办，再选择一个有价值且安全的相关事项主动推进。"
+    "不要只是汇报状态或等待用户输入；完成后简要说明做了什么、结果和下一步。"
 )
 
 _SESSIONS_FILE = Path("~/.hermes/heartbeat/sessions.json").expanduser()
@@ -185,7 +186,7 @@ def _migrate_041_to_042(data: dict[str, Any]) -> dict[str, Any]:
 # v0.4.2: introduced the schema-migration framework.  Older files are
 # now upgraded forward through _SCHEMA_MIGRATIONS instead of wiped, so
 # a stale sessions.json keeps the user's enabled/interval/prompt config.
-_SESSIONS_FORMAT_VERSION = "0.4.5"
+_SESSIONS_FORMAT_VERSION = "0.4.6"
 
 # ── module state ───────────────────────────────────────────────────────────────
 
@@ -912,6 +913,25 @@ def _cmd_xt(raw_args: str) -> str | None:
     subcmd = args.split()[0].lower()
 
     # ── /xt status — show current session heartbeat status ──
+    if subcmd == "help":
+        return (
+            "**/xt 命令说明**\n"
+            "  `/xt` — 立即触发一次 heartbeat，主动检查并推进未完成事项。\n"
+            "  `/xt help` — 显示本帮助。\n"
+            "  `/xt set` — 启用当前对话的 heartbeat（默认每 15 分钟）。\n"
+            "  `/xt unset` — 停用当前对话的 heartbeat。\n"
+            "  `/xt status` — 查看当前对话是否启用、是否运行及间隔。\n"
+            "  `/xt list` — 列出所有已配置的对话及状态。\n"
+            "  `/xt config` — 查看当前配置。\n"
+            "  `/xt config <key> <value>` — 修改配置。\n"
+            "  `/xt stats` — 查看唤醒次数、跳过次数和最近唤醒时间。\n"
+            "  `/xt stats clear` — 清除当前对话的统计数据。\n"
+            "  `/xt test` — 检查配置、Prompt、适配器和循环状态，不触发唤醒。\n"
+            "  `/xt pause [30m|2h|秒数]` — 暂停 heartbeat，默认 1 小时。\n"
+            "  `/xt resume` — 恢复已暂停的 heartbeat。\n\n"
+            "默认行为：优先处理已有未完成任务；没有明确待办时，主动选择安全且有价值的相关事项推进。"
+        )
+
     if subcmd == "status":
         current_key = _get_current_key()
         if current_key is None:

@@ -85,7 +85,7 @@ class TestPluginImports:
         assert mod._MAX_INTERVAL == 86400.0
         assert mod._DEFAULT_INTERVAL == 900.0
         assert mod._DEFAULT_JITTER == 0.0
-        assert mod._SESSIONS_FORMAT_VERSION == "0.4.5"
+        assert mod._SESSIONS_FORMAT_VERSION == "0.4.6"
 
 
 class TestSessionKey:
