@@ -97,6 +97,12 @@ agent_heartbeat:
 
   # Optional extras
   jitter: 0.1                             # ±10% random offset on interval
+
+  # Language for new sessions and built-in command messages: zh (default) or en
+  default_language: zh
+  # Optional English fallback prompt (used when default_language is en)
+  # default_prompt_en: "[Heartbeat Wakeup] Review unfinished work and act proactively."
+
   default_prompt_files:                    # multi-prompt rotation (picked randomly)
     - ~/.hermes/heartbeat/morning.md
     - ~/.hermes/heartbeat/evening.md
@@ -127,6 +133,7 @@ Per-session settings are stored in `~/.hermes/heartbeat/sessions.json`:
     "enabled": true,
     "interval": 900,
     "prompt_file": "~/.hermes/heartbeat/HEARTBEAT.md",
+    "language": "zh",
     "active_start": "",
     "active_end": "",
     "utc_offset": "+8",
@@ -174,6 +181,8 @@ hermes config set agent_heartbeat.enabled true
 | `/xt list` | Show all configured sessions and their status |
 | `/xt config` | View the current session's settings |
 | `/xt config <key> <value>` | Change a setting |
+| `/xt language en` | Switch this conversation to English (`zh` switches back; default is Chinese) |
+| `/xt config language en` | Equivalent language setting command |
 | `/xt stats` | View wakeup statistics |
 | `/xt stats clear` | Reset statistics for current session |
 | `/xt test` | Dry-run: check all config conditions without actual delivery |

@@ -85,7 +85,7 @@ class TestPluginImports:
         assert mod._MAX_INTERVAL == 86400.0
         assert mod._DEFAULT_INTERVAL == 900.0
         assert mod._DEFAULT_JITTER == 0.0
-        assert mod._SESSIONS_FORMAT_VERSION == "0.4.7"
+        assert mod._SESSIONS_FORMAT_VERSION == "0.5.0"
 
 
 class TestSessionKey:
@@ -264,9 +264,23 @@ class TestPrompt:
         result = mod._prompt({"prompt": "Hello heartbeat"})
         assert result == "Hello heartbeat"
 
-    def test_empty_prompt(self):
+    def test_empty_prompt_uses_default_chinese(self):
         mod = _load_plugin()
-        assert mod._prompt({}) == ""
+        assert "[Heartbeat 唤醒]" in mod._prompt({})
+
+    def test_default_prompt_can_be_english(self):
+        mod = _load_plugin()
+        assert "[Heartbeat Wakeup]" in mod._prompt({"language": "en"})
+
+    def test_language_normalization_defaults_to_chinese(self):
+        mod = _load_plugin()
+        assert mod._normalize_language("unknown") == "zh"
+        assert mod._normalize_language("English") == "en"
+
+    def test_localized_text(self):
+        mod = _load_plugin()
+        assert "上下文" in mod._t("zh", "no_context")
+        assert "session context" in mod._t("en", "no_context")
 
     def test_prompt_files_empty_list(self):
         mod = _load_plugin()
@@ -295,7 +309,7 @@ class TestCmdHeartbeat:
     def test_no_subcommand_no_active(self):
         mod = _load_plugin()
         result = mod._cmd_xt("")
-        assert "context" in result
+        assert "上下文" in result
 
     def test_list_empty(self, tmp_path):
         mod = _load_plugin()
@@ -308,49 +322,55 @@ class TestCmdHeartbeat:
         mod = _load_plugin()
         mod._last_source = None
         result = mod._cmd_xt("set")
-        assert "context" in result
+        assert "上下文" in result
 
     def test_unknown_subcommand(self):
         mod = _load_plugin()
         result = mod._cmd_xt("foobar")
-        assert "Unknown" in result
+        assert "未知子命令" in result
 
     def test_pause_no_context(self):
         mod = _load_plugin()
         mod._last_source = None
         result = mod._cmd_xt("pause")
-        assert "context" in result
+        assert "上下文" in result
 
     def test_resume_no_context(self):
         mod = _load_plugin()
         mod._last_source = None
         result = mod._cmd_xt("resume")
-        assert "context" in result
+        assert "上下文" in result
 
     def test_stats_no_context(self):
         mod = _load_plugin()
         mod._last_source = None
         result = mod._cmd_xt("stats")
-        assert "context" in result
+        assert "上下文" in result
 
     def test_test_no_context(self):
         mod = _load_plugin()
         mod._last_source = None
         result = mod._cmd_xt("test")
-        assert "context" in result
+        assert "上下文" in result
 
     def test_config_no_context(self):
         mod = _load_plugin()
         mod._last_source = None
         result = mod._cmd_xt("config")
-        assert "context" in result
+        assert "上下文" in result
 
     def test_pause_duration_invalid(self):
         mod = _load_plugin()
         mod._last_source = object()  # non-None but won't match sessions
         result = mod._cmd_xt("pause 30x")
-        # Should return "not configured" since session not in sessions.json
-        assert "not configured" in result
+        # Should return the localized not-configured message.
+        assert "尚未配置" in result
+
+    def test_language_command_requires_configured_session(self):
+        mod = _load_plugin()
+        mod._last_source = object()
+        result = mod._cmd_xt("language en")
+        assert "尚未配置" in result
 
 
 class TestIsUserMessage:

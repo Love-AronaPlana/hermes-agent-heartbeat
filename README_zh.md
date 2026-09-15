@@ -96,6 +96,12 @@ agent_heartbeat:
 
   # 可选附加功能
   jitter: 0.1                             # ±10% 间隔随机偏移
+
+  # 新会话和内置命令消息的语言：zh（默认）或 en
+  default_language: zh
+  # 可选：英文默认唤醒词（default_language 为 en 时使用）
+  # default_prompt_en: "[Heartbeat Wakeup] Review unfinished work and act proactively."
+
   default_prompt_files:                    # 多 prompt 轮换（随机选取）
     - ~/.hermes/heartbeat/morning.md
     - ~/.hermes/heartbeat/evening.md
@@ -126,6 +132,7 @@ agent_heartbeat:
     "enabled": true,
     "interval": 900,
     "prompt_file": "~/.hermes/heartbeat/HEARTBEAT.md",
+    "language": "zh",
     "active_start": "",
     "active_end": "",
     "utc_offset": "+8",
@@ -172,6 +179,8 @@ hermes config set agent_heartbeat.enabled true
 | `/xt list` | 查看所有已配置会话及其状态 |
 | `/xt config` | 查看当前会话的设置 |
 | `/xt config <key> <value>` | 修改设置 |
+| `/xt language en` | 将当前对话切换为英文（`zh` 切回中文；默认中文） |
+| `/xt config language en` | 等价的语言设置命令 |
 | `/xt stats` | 查看唤醒统计 |
 | `/xt stats clear` | 重置当前会话的统计 |
 | `/xt test` | 干运行：检查所有配置条件但不实际触发 |

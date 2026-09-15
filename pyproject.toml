@@ -1,6 +1,6 @@
 [project]
 name = "agent-heartbeat"
-version = "0.4.7"
+version = "0.5.0"
 description = "Persistent heartbeat plugin for Hermes Agent — periodic wakeups in the same gateway session with full context preservation"
 requires-python = ">=3.11"
 license = {text = "MIT"}

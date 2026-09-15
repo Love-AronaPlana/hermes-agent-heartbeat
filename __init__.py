@@ -44,12 +44,76 @@ _DEFAULT_PAUSE_DURATION = 3600  # 1 hour default pause
 # the user to author a prompt file.  Users can still override globally
 # (config.yaml: ``agent_heartbeat.default_prompt``) or per-session
 # (``/xt set prompt=...``).
-_DEFAULT_PROMPT = (
+_DEFAULT_PROMPT_ZH = (
     "[Heartbeat 唤醒] 检查我们之前的对话、当前任务和已有计划，主动找出尚未完成或可以推进的事项并直接开始处理。"
     "优先完成用户已经明确提出但尚未完成的任务；如果没有明确待办，再选择一个有价值且安全的相关事项主动推进。"
     "如果所有事情都已完成，不要只停在那里：可以自己找点有意义的事情做，例如研究、学习、整理、优化、测试、创作，或者找点有趣的东西探索一下。"
     "总之要保持主动，不要只是汇报状态或等待用户输入；完成后简要说明做了什么、结果和下一步。"
 )
+_DEFAULT_PROMPT_EN = (
+    "[Heartbeat Wakeup] Review our previous conversation, current tasks, and existing plans. "
+    "Find unfinished or actionable items and start working on them directly. "
+    "Prioritize explicitly requested unfinished work; if there is no clear todo, choose one safe and valuable related task to advance. "
+    "If everything is complete, do not just wait: research, learn, organize, optimize, test, create, or explore something useful. "
+    "Stay proactive instead of merely reporting status or waiting for input; briefly report what you did, the result, and the next step."
+)
+# Backward-compatible name for integrations that imported the old constant.
+_DEFAULT_PROMPT = _DEFAULT_PROMPT_ZH
+
+_LANGUAGE_ALIASES = {
+    "zh": "zh", "zh-cn": "zh", "中文": "zh", "chinese": "zh",
+    "en": "en", "en-us": "en", "英文": "en", "english": "en",
+}
+
+_TEXT = {
+    "no_context": ("❌ 没有会话上下文，请先发送一条消息。", "❌ No session context. Send a message first."),
+    "triggered": ("✅ 已触发当前会话的 Heartbeat：{source}", "✅ Heartbeat triggered for {source}"),
+    "no_active": ("❌ 当前会话没有运行中的 Heartbeat，请先使用 `/xt set`。", "❌ No active heartbeat for this session. Use `/xt set` first."),
+    "no_active_short": ("❌ 当前会话没有运行中的 Heartbeat。", "❌ No active heartbeat for this session."),
+    "list_empty": ("当前没有已配置的会话，请使用 `/xt set` 添加。", "No sessions configured. Use `/xt set` to add one."),
+    "not_configured": ("当前会话尚未配置 Heartbeat，请使用 `/xt set` 启用。", "No heartbeat configured for this session. Use `/xt set` to enable one."),
+    "global_disabled": ("❌ Heartbeat 已被全局禁用，请在 config.yaml 中设置 `agent_heartbeat.enabled: true`。", "❌ Heartbeat is globally disabled. Set `agent_heartbeat.enabled: true` in config.yaml."),
+    "set": ("✅ 已为 {source} 启用 Heartbeat。\n   间隔：{interval} 秒\n   发送一条消息后开始运行。", "✅ Heartbeat enabled for {source}.\n   Interval: {interval}s\n   Send a message to activate."),
+    "unset": ("✅ 已为 {source} 停用 Heartbeat。", "✅ Heartbeat disabled for {source}."),
+    "not_configured_source": ("❌ 会话 {source} 尚未配置，请先使用 `/xt set`。", "❌ Session {source} not configured. Use `/xt set` first."),
+    "invalid_duration": ("❌ 时长无效，请使用 `30m`、`2h` 或秒数。", "❌ Invalid duration. Use `30m`, `2h`, or seconds."),
+    "paused": ("⏸️ 已暂停 {source} 的 Heartbeat（{duration}）。", "⏸️ Heartbeat paused for {source} ({duration})."),
+    "not_paused": ("ℹ️ {source} 的 Heartbeat 当前没有暂停。", "ℹ️ Heartbeat for {source} is not paused."),
+    "resumed": ("▶️ 已恢复 {source} 的 Heartbeat。", "▶️ Heartbeat resumed for {source}."),
+    "stats_cleared": ("✅ 已清除 {source} 的统计数据。", "✅ Stats cleared for {source}."),
+    "usage_config": ("❌ 用法：`/xt config <键> <值>`", "❌ Usage: `/xt config <key> <value>`"),
+    "unknown_config": ("❌ 未知配置项 `{config_key}`，可用项：{valid}", "❌ Unknown config key: `{config_key}`. Valid keys: {valid}"),
+    "config_set": ("✅ 已为 {source} 设置 `{config_key}` = `{value}`。", "✅ Set `{config_key}` = `{value}` for {source}."),
+    "invalid_config": ("❌ `{config_key}` 的值无效。", "❌ Invalid value for `{config_key}`."),
+    "unknown_subcommand": ("❌ 未知子命令 `{subcmd}`。可用：`list`、`set`、`unset`、`config`、`stats`、`test`、`pause`、`resume`。", "❌ Unknown subcommand: `{subcmd}`. Try: `list`, `set`, `unset`, `config`, `stats`, `test`, `pause`, `resume`."),
+}
+
+
+def _normalize_language(value: Any) -> str:
+    return _LANGUAGE_ALIASES.get(str(value or "").strip().lower(), "zh")
+
+
+def _language_for_session(key: str | None = None, config: dict[str, Any] | None = None) -> str:
+    if config is not None and "language" in config:
+        return _normalize_language(config.get("language"))
+    if key:
+        sessions = _load_sessions()
+        if isinstance(sessions.get(key), dict) and "language" in sessions[key]:
+            return _normalize_language(sessions[key].get("language"))
+    return _normalize_language(_global_config().get("default_language", "zh"))
+
+
+def _t(language: str, key: str, **kwargs: Any) -> str:
+    value = _TEXT[key][0 if _normalize_language(language) == "zh" else 1]
+    return value.format(**kwargs)
+
+
+def _default_prompt(language: str) -> str:
+    lang = _normalize_language(language)
+    g = _global_config()
+    if lang == "en":
+        return str(g.get("default_prompt_en", "") or _DEFAULT_PROMPT_EN)
+    return str(g.get("default_prompt", "") or _DEFAULT_PROMPT_ZH)
 
 _SESSIONS_FILE = Path("~/.hermes/heartbeat/sessions.json").expanduser()
 _STATS_FILE = Path("~/.hermes/heartbeat/stats.json").expanduser()
@@ -187,7 +251,8 @@ def _migrate_041_to_042(data: dict[str, Any]) -> dict[str, Any]:
 # v0.4.2: introduced the schema-migration framework.  Older files are
 # now upgraded forward through _SCHEMA_MIGRATIONS instead of wiped, so
 # a stale sessions.json keeps the user's enabled/interval/prompt config.
-_SESSIONS_FORMAT_VERSION = "0.4.7"
+# v0.5.0: adds per-session language selection (zh default, en optional).
+_SESSIONS_FORMAT_VERSION = "0.5.0"
 
 # ── module state ───────────────────────────────────────────────────────────────
 
@@ -278,7 +343,8 @@ def _session_defaults() -> dict[str, Any]:
         "interval": float(g.get("default_interval", _DEFAULT_INTERVAL)),
         "prompt_file": str(g.get("default_prompt_file", "") or ""),
         "prompt_files": list(g.get("default_prompt_files", []) or []),
-        "prompt": str(g.get("default_prompt", "") or _DEFAULT_PROMPT),
+        "language": _normalize_language(g.get("default_language", "zh")),
+        "prompt": "",
         "active_start": "",
         "active_end": "",
         "utc_offset": "+8",
@@ -397,8 +463,12 @@ def _prompt(sc: dict[str, Any]) -> str:
         if text:
             return text
 
-    # Fall back to inline prompt
-    return str(sc.get("prompt", "") or "").strip()
+    # Fall back to the built-in prompt. Keep the language-specific default
+    # dynamic even for sessions created before language support was added.
+    inline = str(sc.get("prompt", "") or "").strip()
+    if not inline or inline == _DEFAULT_PROMPT_ZH:
+        return _default_prompt(_normalize_language(sc.get("language", "zh")))
+    return inline
 
 
 def _interval(sc: dict[str, Any]) -> float:
@@ -893,110 +963,163 @@ def _get_current_key() -> str | None:
     return _session_key(_last_source)
 
 
+def _current_language() -> str:
+    return _language_for_session(_get_current_key())
+
+
+def _language_label(language: str) -> str:
+    return "中文" if _normalize_language(language) == "zh" else "English"
+
+
 def _cmd_xt(raw_args: str) -> str | None:
     args = raw_args.strip()
 
     # ── /xt (no subcommand) — manual trigger for CURRENT session ──
+    language = _current_language()
+
     if not args:
         current_key = _get_current_key()
         if current_key is None:
-            return "❌ No session context. Send a message first."
+            return _t(language, "no_context")
         task = _tasks.get(current_key)
         if task is None or task.done():
-            return "❌ No active heartbeat for this session. Use `/xt set` first."
+            return _t(language, "no_active")
         event = _triggers.get(current_key)
         if event is not None:
             event.set()
             logger.info("agent-heartbeat: manual trigger for %s", current_key)
-            return f"✅ Heartbeat triggered for {_format_source(current_key)}"
-        return "❌ No active heartbeat for this session."
+            return _t(language, "triggered", source=_format_source(current_key))
+        return _t(language, "no_active_short")
 
     subcmd = args.split()[0].lower()
 
-    # ── /xt status — show current session heartbeat status ──
+    # ── /xt help — localized command help ──
     if subcmd == "help":
+        if language == "en":
+            return (
+                "**/xt Help**\n"
+                "  `/xt` — trigger an immediate heartbeat in this session.\n"
+                "  `/xt help` — show this help.\n"
+                "  `/xt set` — enable heartbeat for this conversation (15m default).\n"
+                "  `/xt unset` — disable heartbeat for this conversation.\n"
+                "  `/xt status` — show current status and interval.\n"
+                "  `/xt list` — list configured conversations.\n"
+                "  `/xt config` — view current configuration.\n"
+                "  `/xt config <key> <value>` — change a setting.\n"
+                "  `/xt language en|zh` — change this conversation's language.\n"
+                "  `/xt stats` — show wakeup statistics.\n"
+                "  `/xt test` — check configuration without triggering a wakeup.\n"
+                "  `/xt pause [30m|2h|seconds]` — pause heartbeat.\n"
+                "  `/xt resume` — resume heartbeat.\n\n"
+                "Default: prioritize unfinished work, then proactively advance one safe and useful related task."
+            )
         return (
             "**/xt 命令说明**\n"
-            "  `/xt` — 立即触发一次 heartbeat，主动检查并推进未完成事项。\n"
+            "  `/xt` — 立即触发一次 Heartbeat，主动检查并推进未完成事项。\n"
             "  `/xt help` — 显示本帮助。\n"
-            "  `/xt set` — 启用当前对话的 heartbeat（默认每 15 分钟）。\n"
-            "  `/xt unset` — 停用当前对话的 heartbeat。\n"
-            "  `/xt status` — 查看当前对话是否启用、是否运行及间隔。\n"
-            "  `/xt list` — 列出所有已配置的对话及状态。\n"
+            "  `/xt set` — 启用当前对话的 Heartbeat（默认每 15 分钟）。\n"
+            "  `/xt unset` — 停用当前对话的 Heartbeat。\n"
+            "  `/xt status` — 查看当前对话状态和间隔。\n"
+            "  `/xt list` — 列出所有已配置的对话。\n"
             "  `/xt config` — 查看当前配置。\n"
-            "  `/xt config <key> <value>` — 修改配置。\n"
-            "  `/xt stats` — 查看唤醒次数、跳过次数和最近唤醒时间。\n"
-            "  `/xt stats clear` — 清除当前对话的统计数据。\n"
-            "  `/xt test` — 检查配置、Prompt、适配器和循环状态，不触发唤醒。\n"
-            "  `/xt pause [30m|2h|秒数]` — 暂停 heartbeat，默认 1 小时。\n"
-            "  `/xt resume` — 恢复已暂停的 heartbeat。\n\n"
-            "默认行为：优先处理已有未完成任务；没有明确待办时，主动选择安全且有价值的相关事项推进。"
+            "  `/xt config <键> <值>` — 修改配置。\n"
+            "  `/xt language zh|en` — 修改当前对话语言。\n"
+            "  `/xt stats` — 查看唤醒统计。\n"
+            "  `/xt test` — 检查配置但不触发唤醒。\n"
+            "  `/xt pause [30m|2h|秒数]` — 暂停 Heartbeat。\n"
+            "  `/xt resume` — 恢复 Heartbeat。\n\n"
+            "默认行为：优先处理已有未完成任务；没有明确待办时，主动推进一个安全且有价值的相关事项。"
         )
+
+    # `/xt language en|zh` is a convenient alias for per-session config.
+    if subcmd in ("language", "lang"):
+        key = _get_current_key()
+        if key is None:
+            return _t(language, "no_context")
+        rest = args.split(None, 1)[1].strip() if len(args.split(None, 1)) > 1 else ""
+        selected = _LANGUAGE_ALIASES.get(rest.lower())
+        if selected not in ("zh", "en"):
+            return ("❌ 请输入 `zh` 或 `en`。", "❌ Use `zh` or `en`.")[language == "en"]
+        sessions = _load_sessions()
+        if key not in sessions:
+            return _t(language, "not_configured")
+        sessions[key]["language"] = selected
+        _save_sessions(sessions)
+        return (("✅ 已将当前对话语言设置为中文。", "✅ Current conversation language set to English.")[selected == "en"])
 
     if subcmd == "status":
         current_key = _get_current_key()
         if current_key is None:
-            return "❌ No session context."
+            return _t(language, "no_context")
         sessions = _load_sessions()
         sc = sessions.get(current_key)
         if sc is None or not sc.get("enabled", False):
-            return "No heartbeat configured for this session. Use `/xt set` to enable one."
+            return _t(language, "not_configured")
+        session_language = _language_for_session(current_key, sc)
         task = _tasks.get(current_key)
         is_active = task is not None and not task.done()
         paused_until = str(sc.get("paused_until", "") or "").strip()
         if paused_until:
-            pause_status = f"⏸️ Paused until {paused_until}"
+            pause_status = (f"⏸️ 暂停至 {paused_until}" if session_language == "zh" else f"⏸️ Paused until {paused_until}")
         elif is_active:
-            pause_status = "🟢 Active"
+            pause_status = "🟢 运行中" if session_language == "zh" else "🟢 Active"
         else:
-            pause_status = "⚪ Configured (waiting for message)"
-        return f"**Heartbeat Status** — {_format_source(current_key)}\n" \
-               f"  Status: {pause_status}\n" \
-               f"  Interval: {int(sc.get('interval', 900))}s\n" \
-               f"  Window: {sc.get('active_start', '') or 'all day'}–{sc.get('active_end', '') or 'all day'}"
+            pause_status = "⚪ 已配置（等待消息）" if session_language == "zh" else "⚪ Configured (waiting for message)"
+        if session_language == "zh":
+            return f"**Heartbeat 状态** — {_format_source(current_key)}\n   状态：{pause_status}\n   间隔：{int(sc.get('interval', 900))} 秒\n   时间段：{sc.get('active_start', '') or '全天'}–{sc.get('active_end', '') or '全天'}"
+        return f"**Heartbeat Status** — {_format_source(current_key)}\n  Status: {pause_status}\n  Interval: {int(sc.get('interval', 900))}s\n  Window: {sc.get('active_start', '') or 'all day'}–{sc.get('active_end', '') or 'all day'}"
 
     # ── /xt list ────────────────────────────────────────────────────
     if subcmd == "list":
         sessions = _load_sessions()
         if not sessions:
-            return "No sessions configured. Use `/xt set` to add one."
+            return _t(language, "list_empty")
+        if language == "en":
+            list_title = "**Heartbeat Sessions:**"
+            configured_label = "⚪ Configured"
+            disabled_label = "🔴 Disabled"
+            paused_label = "⏸️ Paused"
+            active_label = "🟢 Active"
+            interval_label = "Interval"
+            prompt_label = "Prompt"
+            window_label = "Window"
+        else:
+            list_title = "**Heartbeat 会话：**"
+            configured_label = "⚪ 已配置"
+            disabled_label = "🔴 已停用"
+            paused_label = "⏸️ 已暂停"
+            active_label = "🟢 运行中"
+            interval_label = "间隔"
+            prompt_label = "Prompt"
+            window_label = "时间段"
 
         lines = []
         for key, sc in sorted(sessions.items()):
             enabled = sc.get("enabled", False)
             active = key in _tasks and not _tasks[key].done()
             if active:
-                status = "🟢 Active"
+                status = active_label
             elif enabled:
-                # Check if paused
                 paused_until = str(sc.get("paused_until", "") or "").strip()
-                if paused_until:
-                    status = "⏸️ Paused"
-                else:
-                    status = "⚪ Configured"
+                status = paused_label if paused_until else configured_label
             else:
-                status = "🔴 Disabled"
+                status = disabled_label
             interval = sc.get("interval", _DEFAULT_INTERVAL)
             lines.append(f"  {status} {_format_source(key)}")
-            lines.append(f"         Interval: {int(interval)}s")
-            lines.append(f"         Prompt: {sc.get('prompt_file', '(inline)')}")
+            lines.append(f"         {interval_label}: {int(interval)}s")
+            lines.append(f"         {prompt_label}: {sc.get('prompt_file', '(inline)')}")
             if sc.get("active_start"):
-                lines.append(f"         Window: {sc['active_start']}-{sc['active_end']} UTC{sc.get('utc_offset', '+8')}")
-        return "**Heartbeat Sessions:**\n" + "\n".join(lines)
+                lines.append(f"         {window_label}: {sc['active_start']}-{sc['active_end']} UTC{sc.get('utc_offset', '+8')}")
+        return list_title + "\n" + "\n".join(lines)
 
     # ── /xt set ─────────────────────────────────────────────────────
     if subcmd == "set":
         g = _global_config()
         if g.get("enabled") is False:
-            return (
-                "❌ Heartbeat is globally disabled. "
-                "Enable it in config.yaml:\n"
-                "  agent_heartbeat:\n"
-                "    enabled: true"
-            )
+            return _t(language, "global_disabled")
         key = _get_current_key()
         if key is None:
-            return "❌ No session context. Send a message first."
+            return _t(language, "no_context")
         # Cancel any stale loop from a previous session so the next
         # message starts a fresh loop with current routing metadata.
         _cancel_loop_for_key(key)
@@ -1017,13 +1140,13 @@ def _cmd_xt(raw_args: str) -> str | None:
             sessions[key]["enabled"] = True
         _save_sessions(sessions)
         logger.info("agent-heartbeat: enabled for %s via /xt set", key)
-        return f"✅ Heartbeat enabled for {_format_source(key)}.\n   Interval: {int(sessions[key]['interval'])}s\n   Send a message to activate."
+        return _t(_language_for_session(key, sessions[key]), "set", source=_format_source(key), interval=int(sessions[key]["interval"]))
 
     # ── /xt unset ───────────────────────────────────────────────────
     if subcmd == "unset":
         key = _get_current_key()
         if key is None:
-            return "❌ No session context."
+            return _t(language, "no_context")
         sessions = _load_sessions()
         if key in sessions:
             sessions[key]["enabled"] = False
@@ -1032,17 +1155,17 @@ def _cmd_xt(raw_args: str) -> str | None:
             # Actually cancel the running loop, not just flip the flag
             _cancel_loop_for_key(key)
             logger.info("agent-heartbeat: disabled for %s via /xt unset", key)
-            return f"✅ Heartbeat disabled for {_format_source(key)}."
-        return "❌ Heartbeat not configured for this session."
+            return _t(_language_for_session(key, sessions[key]), "unset", source=_format_source(key))
+        return _t(language, "not_configured")
 
     # ── /xt pause ───────────────────────────────────────────────────
     if subcmd == "pause":
         key = _get_current_key()
         if key is None:
-            return "❌ No session context."
+            return _t(language, "no_context")
         sessions = _load_sessions()
         if key not in sessions:
-            return f"❌ Session {_format_source(key)} not configured. Use `/xt set` first."
+            return _t(language, "not_configured_source", source=_format_source(key))
 
         # Parse optional duration (default: 1 hour)
         rest = args[len("pause"):].strip()
@@ -1059,101 +1182,114 @@ def _cmd_xt(raw_args: str) -> str | None:
                     duration = int(rest)
                 duration = max(60, min(86400, duration))
             except (ValueError, TypeError):
-                return "❌ Invalid duration. Use: `30m` (minutes), `2h` (hours), or `3600` (seconds)."
+                return _t(language, "invalid_duration")
 
         paused_until = (datetime.now() + timedelta(seconds=duration)).isoformat()
         sessions[key]["paused_until"] = paused_until
         _save_sessions(sessions)
         logger.info("agent-heartbeat: paused for %s (%ds)", key, duration)
         human = f"{duration//60}m" if duration < 3600 else f"{duration//3600}h"
-        return f"⏸️ Heartbeat paused for {_format_source(key)} ({human})."
+        return _t(_language_for_session(key, sessions[key]), "paused", source=_format_source(key), duration=human)
 
     # ── /xt resume ──────────────────────────────────────────────────
     if subcmd == "resume":
         key = _get_current_key()
         if key is None:
-            return "❌ No session context."
+            return _t(language, "no_context")
         sessions = _load_sessions()
         if key not in sessions:
-            return f"❌ Session {_format_source(key)} not configured. Use `/xt set` first."
+            return _t(language, "not_configured_source", source=_format_source(key))
         if "paused_until" not in sessions[key] or not sessions[key].get("paused_until"):
-            return f"ℹ️ Heartbeat for {_format_source(key)} is not paused."
+            return _t(language, "not_paused", source=_format_source(key))
         sessions[key].pop("paused_until", None)
         _save_sessions(sessions)
         logger.info("agent-heartbeat: resumed for %s", key)
-        return f"▶️ Heartbeat resumed for {_format_source(key)}."
+        return _t(_language_for_session(key, sessions[key]), "resumed", source=_format_source(key))
 
     # ── /xt stats clear ────────────────────────────────────────────
     if subcmd == "stats" and len(args.split()) > 1 and args.split()[1].lower() == "clear":
         key = _get_current_key()
         if key is None:
-            return "❌ No session context."
+            return _t(language, "no_context")
         _clear_stats(key)
-        return f"✅ Stats cleared for {_format_source(key)}."
+        return _t(_language_for_session(key), "stats_cleared", source=_format_source(key))
 
     # ── /xt stats ───────────────────────────────────────────────────
     if subcmd == "stats":
         key = _get_current_key()
         if key is None:
-            return "❌ No session context."
+            return _t(language, "no_context")
         stats = _load_stats()
         s = stats.get(key, {})
         task = _tasks.get(key)
         is_active = task is not None and not task.done()
 
-        lines = [f"**Heartbeat Stats for {_format_source(key)}:**"]
-        lines.append(f"  Status: {'🟢 Active' if is_active else '⚪ Idle'}")
-        lines.append(f"  Total wakeups: {s.get('total_wakeups', 0)}")
-        lines.append(f"  Total skipped: {s.get('total_skipped', 0)}")
+        if language == "zh":
+            lines = [f"**Heartbeat 统计：{_format_source(key)}**"]
+            lines.append(f"  状态：{'🟢 运行中' if is_active else '⚪ 空闲'}")
+            lines.append(f"  唤醒次数：{s.get('total_wakeups', 0)}")
+            lines.append(f"  跳过次数：{s.get('total_skipped', 0)}")
+        else:
+            lines = [f"**Heartbeat Stats for {_format_source(key)}:**"]
+            lines.append(f"  Status: {'🟢 Active' if is_active else '⚪ Idle'}")
+            lines.append(f"  Total wakeups: {s.get('total_wakeups', 0)}")
+            lines.append(f"  Total skipped: {s.get('total_skipped', 0)}")
         last_wakeup = s.get("last_wakeup_ts")
         if last_wakeup:
             try:
                 dt = datetime.fromisoformat(last_wakeup)
                 elapsed = (datetime.now() - dt).total_seconds()
                 if elapsed < 60:
-                    lines.append(f"  Last wakeup: {int(elapsed)}s ago")
+                    age = f"{int(elapsed)}{'秒前' if language == 'zh' else 's ago'}"
                 elif elapsed < 3600:
-                    lines.append(f"  Last wakeup: {int(elapsed // 60)}m ago")
+                    age = f"{int(elapsed // 60)}{'分钟前' if language == 'zh' else 'm ago'}"
                 else:
-                    lines.append(f"  Last wakeup: {elapsed / 3600:.1f}h ago")
+                    age = f"{elapsed / 3600:.1f}{'小时前' if language == 'zh' else 'h ago'}"
+                lines.append(f"  {'最近唤醒' if language == 'zh' else 'Last wakeup'}: {age}")
             except (ValueError, TypeError):
                 pass
         last_error = s.get("last_error")
         if last_error:
-            lines.append(f"  Last error: `{last_error}`")
+            lines.append(f"  {'最近错误' if language == 'zh' else 'Last error'}: `{last_error}`")
         last_skip_reason = s.get("last_skip_reason")
         if last_skip_reason:
-            lines.append(f"  Last skip: {last_skip_reason}")
+            lines.append(f"  {'最近跳过' if language == 'zh' else 'Last skip'}: {last_skip_reason}")
         created = s.get("created_ts")
         if created:
-            lines.append(f"  Created: {created}")
+            lines.append(f"  {'创建时间' if language == 'zh' else 'Created'}: {created}")
         return "\n".join(lines)
 
     # ── /xt stats clear ─────────────────────────────────────────────
     if subcmd == "stats" and len(args.split()) > 1 and args.split()[1].lower() == "clear":
         key = _get_current_key()
         if key is None:
-            return "❌ No session context."
+            return _t(language, "no_context")
         _clear_stats(key)
-        return f"✅ Stats cleared for {_format_source(key)}."
+        return _t(_language_for_session(key), "stats_cleared", source=_format_source(key))
 
     # ── /xt test — dry run ──────────────────────────────────────────
     if subcmd == "test":
         key = _get_current_key()
         if key is None:
-            return "❌ No session context. Send a message first."
+            return _t(language, "no_context")
         sc = _get_session_config(key)
         g = _global_config()
 
-        lines = [f"**Heartbeat Test for {_format_source(key)}:**"]
-        lines.append(f"  Global enabled: {bool(g.get('enabled', True))}")
-        lines.append(f"  Session enabled: {bool(sc.get('enabled', False))}")
-        lines.append(f"  Interval: {int(sc.get('interval', _DEFAULT_INTERVAL))}s")
+        if language == "zh":
+            lines = [f"**Heartbeat 测试：{_format_source(key)}**"]
+            lines.append(f"  全局启用：{bool(g.get('enabled', True))}")
+            lines.append(f"  会话启用：{bool(sc.get('enabled', False))}")
+            lines.append(f"  间隔：{int(sc.get('interval', _DEFAULT_INTERVAL))} 秒")
+        else:
+            lines = [f"**Heartbeat Test for {_format_source(key)}:**"]
+            lines.append(f"  Global enabled: {bool(g.get('enabled', True))}")
+            lines.append(f"  Session enabled: {bool(sc.get('enabled', False))}")
+            lines.append(f"  Interval: {int(sc.get('interval', _DEFAULT_INTERVAL))}s")
 
         # Check jitter
         jitter_pct = float(g.get("jitter", _DEFAULT_JITTER))
         if jitter_pct > 0:
-            lines.append(f"  Jitter: ±{jitter_pct * 100:.0f}%")
+            lines.append(f"  {'随机偏移' if language == 'zh' else 'Jitter'}: ±{jitter_pct * 100:.0f}%")
 
         # Check active window
         active_start = str(sc.get("active_start", "") or "").strip()
@@ -1166,12 +1302,16 @@ def _cmd_xt(raw_args: str) -> str | None:
                 tz = timezone(timedelta(hours=sign * offset_hours))
                 now = datetime.now(tz)
                 in_window = _in_active_window(sc)
-                lines.append(f"  Window: {active_start}-{active_end} UTC{utc_offset_str}")
-                lines.append(f"  Current time: {now.strftime('%H:%M')} ({'✅ in window' if in_window else '❌ outside window'})")
+                if language == "zh":
+                    lines.append(f"  时间段：{active_start}-{active_end} UTC{utc_offset_str}")
+                    lines.append(f"  当前时间：{now.strftime('%H:%M')}（{'✅ 在时间段内' if in_window else '❌ 不在时间段内'}）")
+                else:
+                    lines.append(f"  Window: {active_start}-{active_end} UTC{utc_offset_str}")
+                    lines.append(f"  Current time: {now.strftime('%H:%M')} ({'✅ in window' if in_window else '❌ outside window'})")
             except (ValueError, TypeError):
                 pass
         else:
-            lines.append("  Window: always active")
+            lines.append("  时间段：始终启用" if language == "zh" else "  Window: always active")
 
         # Check idle
         idle_enabled = bool(sc.get("idle_auto_pause_enabled", False))
@@ -1180,22 +1320,32 @@ def _cmd_xt(raw_args: str) -> str | None:
             if last_ts:
                 elapsed = (datetime.now().timestamp() - last_ts) / 60
                 idle_minutes = float(sc.get("idle_auto_pause_minutes", 120))
-                lines.append(f"  Idle: {elapsed:.0f}m since last message (threshold: {int(idle_minutes)}m) {'✅ active' if elapsed < idle_minutes else '❌ paused'}")
+                if language == "zh":
+                    lines.append(f"  空闲：距上次消息 {elapsed:.0f} 分钟（阈值：{int(idle_minutes)} 分钟）{'✅ 活跃' if elapsed < idle_minutes else '❌ 已暂停'}")
+                else:
+                    lines.append(f"  Idle: {elapsed:.0f}m since last message (threshold: {int(idle_minutes)}m) {'✅ active' if elapsed < idle_minutes else '❌ paused'}")
             else:
-                lines.append("  Idle: no messages yet (active)")
+                lines.append("  空闲：尚无消息（活跃）" if language == "zh" else "  Idle: no messages yet (active)")
         else:
-            lines.append("  Idle pause: disabled")
+            lines.append("  空闲自动暂停：已禁用" if language == "zh" else "  Idle pause: disabled")
 
         # Check pause
         pause_remaining = _check_paused(sc)
         if pause_remaining is not None:
-            lines.append(f"  Paused: {int(pause_remaining)}s remaining")
+            lines.append(f"  {'暂停：剩余' if language == 'zh' else 'Paused:'} {int(pause_remaining)}{'秒' if language == 'zh' else 's remaining'}")
         else:
-            lines.append("  Paused: no")
+            lines.append("  暂停：否" if language == "zh" else "  Paused: no")
 
         # Check prompt
         prompt = _prompt(sc)
-        if prompt:
+        if language == "zh":
+            if prompt:
+                preview = prompt[:80].replace("\n", "\\n")
+                lines.append(f"  Prompt：{preview}…")
+                lines.append(f"  Prompt 长度：{len(prompt)} 字符")
+            else:
+                lines.append("  ❌ 未配置 Prompt！请设置 prompt_file 或 prompt。")
+        elif prompt:
             preview = prompt[:80].replace("\n", "\\n")
             lines.append(f"  Prompt: {preview}...")
             lines.append(f"  Prompt length: {len(prompt)} chars")
@@ -1204,14 +1354,17 @@ def _cmd_xt(raw_args: str) -> str | None:
 
         # Check adapter
         adapter = _adapter_for_source(_gateway_ref, _last_source) if _gateway_ref and _last_source else None
-        lines.append(f"  Adapter: {'✅ available' if adapter else '❌ not found'}")
+        if language == "zh":
+            lines.append(f"  适配器：{'✅ 可用' if adapter else '❌ 未找到'}")
+        else:
+            lines.append(f"  Adapter: {'✅ available' if adapter else '❌ not found'}")
 
         # Check if loop is running
         task = _tasks.get(key)
         if task and not task.done():
-            lines.append("  Loop status: 🟢 running")
+            lines.append("  循环状态：🟢 运行中" if language == "zh" else "  Loop status: 🟢 running")
         else:
-            lines.append("  Loop status: ⚪ not started (will start on next message)")
+            lines.append("  循环状态：⚪ 尚未启动（下一条消息时启动）" if language == "zh" else "  Loop status: ⚪ not started (will start on next message)")
 
         return "\n".join(lines)
 
@@ -1219,46 +1372,64 @@ def _cmd_xt(raw_args: str) -> str | None:
     if subcmd == "config":
         key = _get_current_key()
         if key is None:
-            return "❌ No session context."
+            return _t(language, "no_context")
         sessions = _load_sessions()
         if key not in sessions:
-            return f"❌ Session {_format_source(key)} not configured. Use `/xt set` first."
+            return _t(language, "not_configured_source", source=_format_source(key))
 
         # Parse key=value or key value
         rest = args[len("config"):].strip()
         if not rest:
             # Show current config
             sc = _get_session_config(key)
-            lines = [
-                f"**Heartbeat Config for {_format_source(key)}:**",
-                f"  enabled: {sc.get('enabled', False)}",
-                f"  interval: {int(sc.get('interval', _DEFAULT_INTERVAL))}s",
-                f"  prompt_file: {sc.get('prompt_file', '') or '(none)'}",
-                f"  prompt_files: {sc.get('prompt_files', []) or '(none)'}",
-                f"  active_start: {sc.get('active_start', '') or '(none)'}",
-                f"  active_end: {sc.get('active_end', '') or '(none)'}",
-                f"  utc_offset: {sc.get('utc_offset', '+8')}",
-                f"  idle_auto_pause_enabled: {sc.get('idle_auto_pause_enabled', False)}",
-                f"  idle_auto_pause_minutes: {sc.get('idle_auto_pause_minutes', 120)}",
-                f"  paused_until: {sc.get('paused_until', '') or '(none)'}",
-            ]
+            session_language = _language_for_session(key, sc)
+            if session_language == "zh":
+                lines = [
+                    f"**Heartbeat 配置：{_format_source(key)}**",
+                    f"  启用：{sc.get('enabled', False)}",
+                    f"  间隔：{int(sc.get('interval', _DEFAULT_INTERVAL))} 秒",
+                    f"  语言：{_language_label(session_language)}",
+                    f"  prompt_file：{sc.get('prompt_file', '') or '（无）'}",
+                    f"  prompt_files：{sc.get('prompt_files', []) or '（无）'}",
+                    f"  活跃开始：{sc.get('active_start', '') or '（无）'}",
+                    f"  活跃结束：{sc.get('active_end', '') or '（无）'}",
+                    f"  UTC 偏移：{sc.get('utc_offset', '+8')}",
+                    f"  空闲自动暂停：{sc.get('idle_auto_pause_enabled', False)}",
+                    f"  空闲阈值：{sc.get('idle_auto_pause_minutes', 120)} 分钟",
+                    f"  暂停至：{sc.get('paused_until', '') or '（无）'}",
+                ]
+            else:
+                lines = [
+                    f"**Heartbeat Config for {_format_source(key)}:**",
+                    f"  Enabled: {sc.get('enabled', False)}",
+                    f"  Interval: {int(sc.get('interval', _DEFAULT_INTERVAL))}s",
+                    f"  Language: {_language_label(session_language)}",
+                    f"  prompt_file: {sc.get('prompt_file', '') or '(none)'}",
+                    f"  prompt_files: {sc.get('prompt_files', []) or '(none)'}",
+                    f"  Active start: {sc.get('active_start', '') or '(none)'}",
+                    f"  Active end: {sc.get('active_end', '') or '(none)'}",
+                    f"  UTC offset: {sc.get('utc_offset', '+8')}",
+                    f"  Idle auto-pause: {sc.get('idle_auto_pause_enabled', False)}",
+                    f"  Idle threshold: {sc.get('idle_auto_pause_minutes', 120)}m",
+                    f"  Paused until: {sc.get('paused_until', '') or '(none)'}",
+                ]
             return "\n".join(lines)
 
         # Parse key value
         parts = rest.split(None, 1)
         if len(parts) < 2:
-            return "❌ Usage: `/xt config <key> <value>`"
+            return _t(language, "usage_config")
         cfg_key, cfg_val = parts[0], parts[1]
         sc = sessions[key]
 
         # Validate and coerce
         valid_keys = {
-            "enabled", "interval", "prompt_file", "prompt_files",
+            "enabled", "interval", "prompt_file", "prompt_files", "prompt", "language",
             "active_start", "active_end", "utc_offset",
             "idle_auto_pause_enabled", "idle_auto_pause_minutes",
         }
         if cfg_key not in valid_keys:
-            return f"❌ Unknown config key: `{cfg_key}`. Valid keys: {', '.join(sorted(valid_keys))}"
+            return _t(language, "unknown_config", config_key=cfg_key, valid=', '.join(sorted(valid_keys)))
 
         try:
             if cfg_key in ("enabled", "idle_auto_pause_enabled"):
@@ -1267,18 +1438,23 @@ def _cmd_xt(raw_args: str) -> str | None:
                 cfg_val = int(cfg_val)
             elif cfg_key == "prompt_files":
                 cfg_val = [p.strip() for p in cfg_val.split(",") if p.strip()]
-            elif cfg_key in ("active_start", "active_end", "prompt_file", "utc_offset"):
+            elif cfg_key == "language":
+                normalized = _LANGUAGE_ALIASES.get(str(cfg_val).strip().lower())
+                if normalized not in ("zh", "en"):
+                    raise ValueError("language must be zh or en")
+                cfg_val = normalized
+            elif cfg_key in ("active_start", "active_end", "prompt_file", "prompt", "utc_offset"):
                 cfg_val = str(cfg_val)
             else:
                 cfg_val = str(cfg_val)
 
             sc[cfg_key] = cfg_val
             _save_sessions(sessions)
-            return f"✅ Set `{cfg_key}` = `{cfg_val}` for {_format_source(key)}."
+            return _t(_language_for_session(key, sc), "config_set", source=_format_source(key), config_key=cfg_key, value=cfg_val)
         except (ValueError, TypeError):
-            return f"❌ Invalid value for `{cfg_key}`."
+            return _t(language, "invalid_config", config_key=cfg_key)
 
-    return f"❌ Unknown subcommand: `{subcmd}`. Try: `list`, `set`, `unset`, `config`, `stats`, `test`, `pause`, `resume`."
+    return _t(language, "unknown_subcommand", subcmd=subcmd)
 
 
 # ── entry point ────────────────────────────────────────────────────────────────
