@@ -82,6 +82,7 @@ _SCHEMA_MIGRATIONS: list[tuple[str, str, Any]] = [
     ("0.3.3", "0.4.0", lambda d: _migrate_033_to_040(d)),
     ("0.4.0", "0.4.1", lambda d: _migrate_040_to_041(d)),
     ("0.4.1", "0.4.2", lambda d: _migrate_041_to_042(d)),
+    ("0.4.2", "0.4.4", lambda d: dict(d)),
 ]
 
 
@@ -184,7 +185,7 @@ def _migrate_041_to_042(data: dict[str, Any]) -> dict[str, Any]:
 # v0.4.2: introduced the schema-migration framework.  Older files are
 # now upgraded forward through _SCHEMA_MIGRATIONS instead of wiped, so
 # a stale sessions.json keeps the user's enabled/interval/prompt config.
-_SESSIONS_FORMAT_VERSION = "0.4.3"
+_SESSIONS_FORMAT_VERSION = "0.4.4"
 
 # ── module state ───────────────────────────────────────────────────────────────
 
@@ -795,14 +796,12 @@ def _on_pre_gateway_dispatch(event: Any, gateway: Any, **_: Any) -> dict | None:
     # handlers (set/status/...) know which conversation they came from.
     _last_source = source
 
-    # ── Intercept /xt, /heartbeat, /hb BEFORE built-in dispatch ──
-    # Hermes core ships a built-in /heartbeat whose aliases include /hb; we
-    # take over all three so the plugin's richer command set always wins.
-    # register_command("xt") in register() is a second safety net.
+    # ── Intercept only /xt before normal dispatch ──
+    # Hermes core owns /heartbeat and /hb. The plugin deliberately does not
+    # shadow either built-in name. /xt is the sole plugin command.
     text = (getattr(event, "text", "") or "").strip()
-    if text.startswith("/xt") or text.startswith("/heartbeat") or text.startswith("/hb"):
-        # Extract args after the command name
-        _, _, remainder = text.partition(" ")
+    command_text, _, remainder = text.partition(" ")
+    if command_text.split("@", 1)[0].lower() == "/xt":
         remainder = remainder.strip()
         response_text = _cmd_xt(remainder)
         if response_text:
