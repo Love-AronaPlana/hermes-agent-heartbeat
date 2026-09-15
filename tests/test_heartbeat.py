@@ -165,9 +165,11 @@ class TestStatsPersistence:
         test_file = tmp_path / "stats.json"
         with patch.object(mod, "_STATS_FILE", test_file):
             mod._track_stat("telegram:123:", "wakeup")
+            mod._track_stat("telegram:123:", "last_user_message_ts", 1000.0)
             stats = mod._load_stats()
             assert stats["telegram:123:"]["total_wakeups"] == 1
             assert stats["telegram:123:"]["total_skipped"] == 0
+            assert stats["telegram:123:"]["last_user_message_ts"] == 1000.0
 
     def test_track_stat_skip(self, tmp_path):
         mod = _load_plugin()
@@ -186,6 +188,65 @@ class TestStatsPersistence:
             mod._clear_stats("telegram:123:")
             stats = mod._load_stats()
             assert "telegram:123:" not in stats
+
+
+class TestNextTrigger:
+    def test_format_chinese_and_english(self, monkeypatch):
+        mod = _load_plugin()
+        now = 1_700_000_000.0
+        monkeypatch.setattr(mod.time, "time", lambda: now)
+        zh = mod._format_next_trigger(now + 120, "zh", "+8")
+        en = mod._format_next_trigger(now + 120, "en", "+8")
+        assert "分钟后" in zh
+        assert "in 2m" in en
+        assert "UTC+8" in zh
+
+    def test_fallback_uses_last_message_and_interval(self, monkeypatch):
+        mod = _load_plugin()
+        monkeypatch.setattr(mod, "_next_trigger_at", {})
+        monkeypatch.setitem(mod._last_user_message, "telegram:1:", 1000.0)
+        assert mod._fallback_next_trigger("telegram:1:", {"enabled": True, "interval": 900}) == 1900.0
+
+    def test_fallback_is_unscheduled_after_wakeup_or_pause(self, monkeypatch):
+        mod = _load_plugin()
+        monkeypatch.setitem(mod._last_user_message, "telegram:1:", 1000.0)
+        monkeypatch.setitem(mod._after_wake, "telegram:1:", True)
+        assert mod._fallback_next_trigger("telegram:1:", {"enabled": True, "interval": 900}) is None
+        monkeypatch.setitem(mod._after_wake, "telegram:1:", False)
+        assert mod._fallback_next_trigger(
+            "telegram:1:",
+            {"enabled": True, "interval": 900, "paused_until": "2099-01-01T00:00:00"},
+        ) is None
+
+    def test_stats_and_test_show_next_trigger(self, tmp_path, monkeypatch):
+        mod = _load_plugin()
+        source = types.SimpleNamespace(
+            platform=mod.Platform.TELEGRAM, chat_id="1", thread_id=None
+        )
+        key = "telegram:1:"
+        mod._last_source = source
+        now = 1_700_000_000.0
+        monkeypatch.setattr(mod.time, "time", lambda: now)
+        monkeypatch.setitem(mod._next_trigger_at, key, now + 120)
+        sessions_file = tmp_path / "sessions.json"
+        stats_file = tmp_path / "stats.json"
+        with patch.object(mod, "_SESSIONS_FILE", sessions_file), patch.object(
+            mod, "_STATS_FILE", stats_file
+        ):
+            mod._save_sessions({key: {"enabled": True, "interval": 900}})
+            stats = mod._cmd_xt("stats")
+            test = mod._cmd_xt("test")
+            mod._save_sessions({key: {"enabled": True, "interval": 900, "language": "en"}})
+            stats_en = mod._cmd_xt("stats")
+            test_en = mod._cmd_xt("test")
+        assert "下一次触发" in stats
+        assert "2分钟后" in stats
+        assert "下一次触发" in test
+        assert "2分钟后" in test
+        assert "Next trigger" in stats_en
+        assert "in 2m" in stats_en
+        assert "Next trigger" in test_en
+        assert "in 2m" in test_en
 
 
 class TestInterval:

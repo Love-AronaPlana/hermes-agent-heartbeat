@@ -287,6 +287,7 @@ View wakeup statistics:
 # >   Status: 🟢 Active
 # >   Total wakeups: 47
 # >   Total skipped: 3
+# >   Next trigger: 2026-09-16 15:00:00 UTC+8 (in 8m)
 # >   Last wakeup: 12m ago
 # >   Last error: (none)
 
@@ -312,6 +313,7 @@ Check all conditions without actually delivering a wakeup:
 # >   Prompt length: 142 chars
 # >   Adapter: ✅ available
 # >   Loop status: 🟢 running
+# >   Next trigger: 2026-09-16 15:00:00 UTC+8 (in 8m)
 ```
 
 ---

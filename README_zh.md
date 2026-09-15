@@ -274,12 +274,13 @@ agent_heartbeat:
 
 ```bash
 /xt stats
-# > Heartbeat Stats for telegram/6211819157/DM:
-# >   Status: 🟢 Active
-# >   Total wakeups: 47
-# >   Total skipped: 3
-# >   Last wakeup: 12m ago
-# >   Last error: (none)
+# > Heartbeat 统计：telegram/6211819157/DM
+# >   状态：🟢 运行中
+# >   唤醒次数：47
+# >   跳过次数：3
+# >   下一次触发：2026-09-16 15:00:00 UTC+8（8 分钟后）
+# >   最近唤醒：12 分钟前
+# >   最近错误：无
 
 /xt stats clear    # 重置计数器
 ```
@@ -290,19 +291,20 @@ agent_heartbeat:
 
 ```bash
 /xt test
-# > Heartbeat Test for telegram/6211819157/DM:
-# >   Global enabled: True
-# >   Session enabled: True
-# >   Interval: 900s
-# >   Jitter: ±10%
-# >   Window: 08:00-02:00 UTC+8
-# >   Current time: 14:35 (✅ in window)
-# >   Idle: 5m since last message (active)
-# >   Paused: no
-# >   Prompt: [Heartbeat Wakeup]\n\nCheck the current market...
-# >   Prompt length: 142 chars
-# >   Adapter: ✅ available
-# >   Loop status: 🟢 running
+# > Heartbeat 测试：telegram/6211819157/DM
+# >   全局启用：True
+# >   会话启用：True
+# >   间隔：900 秒
+# >   随机偏移：±10%
+# >   时间段：08:00-02:00 UTC+8
+# >   当前时间：14:35（✅ 在时间段内）
+# >   空闲：距上次消息 5 分钟（活跃）
+# >   暂停：否
+# >   Prompt：[Heartbeat 唤醒]\\n\\n检查当前任务...
+# >   Prompt 长度：142 字符
+# >   适配器：✅ 可用
+# >   循环状态：🟢 运行中
+# >   下一次触发：2026-09-16 15:00:00（8 分钟后）
 ```
 
 ---

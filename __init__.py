@@ -259,6 +259,7 @@ _SESSIONS_FORMAT_VERSION = "0.5.0"
 _tasks: dict[str, asyncio.Task] = {}
 _triggers: dict[str, asyncio.Event] = {}  # key -> manual trigger event
 _last_user_message: dict[str, float] = {}  # key -> last USER message timestamp
+_next_trigger_at: dict[str, float | None] = {}  # key -> next scheduled automatic wake
 _gateway_ref: Any = None  # last seen gateway (for slash command)
 _sources: dict[str, Any] = {}  # key -> SessionSource for manual trigger
 _last_source: Any = None  # source of the last incoming user message
@@ -555,6 +556,72 @@ def _check_paused(sc: dict[str, Any]) -> float | None:
     return None
 
 
+def _set_next_trigger(key: str, timestamp: float | None) -> None:
+    """Publish the next automatic wake timestamp for status/test commands."""
+    _next_trigger_at[key] = timestamp
+
+
+def _clear_next_trigger(key: str) -> None:
+    _next_trigger_at.pop(key, None)
+
+
+def _format_next_trigger(
+    timestamp: float | None, language: str, utc_offset: str = "+8"
+) -> str:
+    """Format a next-wakeup timestamp using the session's configured timezone."""
+    lang = _normalize_language(language)
+    if not timestamp:
+        return "未安排" if lang == "zh" else "not scheduled"
+    offset_text = str(utc_offset or "+8").strip()
+    try:
+        sign = -1 if offset_text.startswith("-") else 1
+        offset_hours = int(offset_text.lstrip("+").lstrip("-"))
+        tz = timezone(timedelta(hours=sign * offset_hours))
+    except (TypeError, ValueError):
+        offset_text = "+8"
+        tz = timezone(timedelta(hours=8))
+    dt = datetime.fromtimestamp(timestamp, tz=timezone.utc).astimezone(tz)
+    remaining = int(timestamp - time.time())
+    if remaining <= 0:
+        return "即将触发" if lang == "zh" else "due now"
+    if remaining < 60:
+        eta = f"{remaining}秒后" if lang == "zh" else f"in {remaining}s"
+    elif remaining < 3600:
+        eta = f"{remaining // 60}分钟后" if lang == "zh" else f"in {remaining // 60}m"
+    else:
+        eta = f"{remaining / 3600:.1f}小时后" if lang == "zh" else f"in {remaining / 3600:.1f}h"
+    clock = dt.strftime("%Y-%m-%d %H:%M:%S")
+    return f"{clock} UTC{offset_text}（{eta}）" if lang == "zh" else f"{clock} UTC{offset_text} ({eta})"
+
+
+def _fallback_next_trigger(key: str, sc: dict[str, Any]) -> float | None:
+    """Estimate the next trigger when the loop has not published one yet."""
+    scheduled = _next_trigger_at.get(key)
+    if scheduled is not None:
+        return scheduled
+    if not bool(sc.get("enabled", False)):
+        return None
+    # After a wakeup the loop deliberately waits for a new user message;
+    # the previous message timestamp must not be presented as a stale trigger.
+    if _after_wake.get(key, False):
+        return None
+    if _check_paused(sc) is not None:
+        return None
+    last_message = _last_user_message.get(key)
+    if last_message is None:
+        # Preserve the estimate across a gateway restart when available.
+        stats = _load_stats().get(key, {})
+        last_message = stats.get("last_user_message_ts")
+    if last_message is None:
+        return None
+    try:
+        interval = float(sc.get("interval", _DEFAULT_INTERVAL))
+    except (TypeError, ValueError):
+        interval = _DEFAULT_INTERVAL
+    interval = max(_MIN_INTERVAL, min(_MAX_INTERVAL, interval))
+    return float(last_message) + interval
+
+
 def _is_user_message(event: Any) -> bool:
     """Check if the event is a user-initiated message (not agent/system)."""
     msg = getattr(event, "message", None)
@@ -601,6 +668,7 @@ def _track_stat(key: str, field: str, value: Any = None) -> None:
             "total_wakeups": 0,
             "total_skipped": 0,
             "last_wakeup_ts": None,
+            "last_user_message_ts": None,
             "last_error": None,
             "created_ts": datetime.now().isoformat(),
             "last_skip_reason": None,
@@ -613,6 +681,8 @@ def _track_stat(key: str, field: str, value: Any = None) -> None:
         stats[key]["last_skip_reason"] = str(value) if value else None
     elif field == "error":
         stats[key]["last_error"] = str(value) if value else None
+    elif field == "last_user_message_ts":
+        stats[key]["last_user_message_ts"] = float(value) if value is not None else None
     elif value is not None:
         stats[key][field] = value
     _save_stats(stats)
@@ -644,6 +714,7 @@ def _cancel_loop_for_key(key: str) -> None:
     _sources.pop(key, None)
     _last_user_message.pop(key, None)
     _after_wake.pop(key, None)
+    _clear_next_trigger(key)
 
 
 def _start_loop(gateway: Any, source: Any, key: str) -> None:
@@ -713,12 +784,14 @@ async def _run(gateway: Any, source: Any, key: str) -> None:
 
             # ── check active window ──
             if not _in_active_window(sc):
+                _clear_next_trigger(key)
                 _track_stat(key, "skip", "outside active window")
                 await asyncio.sleep(_interval(sc))
                 continue
 
             # ── check idle pause ──
             if _check_idle_pause(sc, key):
+                _clear_next_trigger(key)
                 _track_stat(key, "skip", "idle")
                 await asyncio.sleep(_interval(sc))
                 continue
@@ -726,6 +799,7 @@ async def _run(gateway: Any, source: Any, key: str) -> None:
             # ── check manual pause ──
             pause_remaining = _check_paused(sc)
             if pause_remaining is not None:
+                _clear_next_trigger(key)
                 _track_stat(key, "skip", f"paused ({int(pause_remaining)}s remaining)")
                 await asyncio.sleep(min(pause_remaining, _interval(sc)))
                 continue
@@ -737,6 +811,10 @@ async def _run(gateway: Any, source: Any, key: str) -> None:
             is_manual = False
             interval = _interval(sc)
             current_source = _sources.get(key, source)  # refresh before countdown
+            # Publish a provisional schedule immediately; it is refreshed below
+            # whenever the countdown is reset or a wake is delivered.
+            last_msg = _last_user_message.get(key, 0.0)
+            _set_next_trigger(key, (last_msg + interval) if last_msg > 0.0 else (time.time() + interval))
             while True:
                 # After a heartbeat wake, do NOT restart the countdown —
                 # wait for the next user message to reset the timer.
@@ -772,8 +850,10 @@ async def _run(gateway: Any, source: Any, key: str) -> None:
                 last_msg = _last_user_message.get(key, 0.0)
                 now = time.time()
                 if last_msg > 0.0:
+                    _set_next_trigger(key, last_msg + interval)
                     remaining = max(0.0, interval - (now - last_msg))
                 else:
+                    _set_next_trigger(key, now + interval)
                     remaining = interval  # no user message yet, wait full interval
 
                 if remaining <= 0:
@@ -830,6 +910,7 @@ async def _run(gateway: Any, source: Any, key: str) -> None:
                         adapter, text=prompt, session_id=session_id, source=current_source
                     )
                     _after_wake[key] = True
+                    _clear_next_trigger(key)
                     _track_stat(key, "wakeup")
                     logger.info("agent-heartbeat: delivered to %s%s", key, " [manual]" if is_manual else "")
                 except Exception as exc:
@@ -850,6 +931,7 @@ async def _run(gateway: Any, source: Any, key: str) -> None:
             _sources.pop(key, None)
             _last_user_message.pop(key, None)
             _after_wake.pop(key, None)
+            _clear_next_trigger(key)
         logger.info("agent-heartbeat: loop ended for %s", key)
 
 
@@ -904,10 +986,17 @@ def _on_pre_gateway_dispatch(event: Any, gateway: Any, **_: Any) -> dict | None:
 
     # Only track user-initiated messages for idle detection
     if _is_user_message(event):
-        _last_user_message[key] = datetime.now().timestamp()
+        message_ts = datetime.now().timestamp()
+        _last_user_message[key] = message_ts
+        _track_stat(key, "last_user_message_ts", message_ts)
         _after_wake[key] = False  # allow heartbeat to fire again after user msg
         # Keep source fresh so wake uses the latest routing metadata
         _sources[key] = source
+        # The countdown starts from this user message. The loop refreshes this
+        # value too, but publishing it here makes /xt test and /xt stats useful
+        # immediately after a message arrives.
+        if key in _tasks and not _tasks[key].done():
+            _set_next_trigger(key, message_ts + _interval(_get_session_config(key)))
 
     # Check if this session is configured and enabled
     if not _is_session_active(key):
@@ -987,6 +1076,7 @@ def _cmd_xt(raw_args: str) -> str | None:
         event = _triggers.get(current_key)
         if event is not None:
             event.set()
+            _clear_next_trigger(current_key)
             logger.info("agent-heartbeat: manual trigger for %s", current_key)
             return _t(language, "triggered", source=_format_source(current_key))
         return _t(language, "no_active_short")
@@ -1234,6 +1324,13 @@ def _cmd_xt(raw_args: str) -> str | None:
             lines.append(f"  Status: {'🟢 Active' if is_active else '⚪ Idle'}")
             lines.append(f"  Total wakeups: {s.get('total_wakeups', 0)}")
             lines.append(f"  Total skipped: {s.get('total_skipped', 0)}")
+        sc = _get_session_config(key)
+        next_trigger = _fallback_next_trigger(key, sc)
+        utc_offset = sc.get("utc_offset", "+8")
+        if language == "zh":
+            lines.append(f"  下一次触发：{_format_next_trigger(next_trigger, language, utc_offset)}")
+        else:
+            lines.append(f"  Next trigger: {_format_next_trigger(next_trigger, language, utc_offset)}")
         last_wakeup = s.get("last_wakeup_ts")
         if last_wakeup:
             try:
@@ -1365,6 +1462,14 @@ def _cmd_xt(raw_args: str) -> str | None:
             lines.append("  循环状态：🟢 运行中" if language == "zh" else "  Loop status: 🟢 running")
         else:
             lines.append("  循环状态：⚪ 尚未启动（下一条消息时启动）" if language == "zh" else "  Loop status: ⚪ not started (will start on next message)")
+
+        next_trigger = _fallback_next_trigger(key, sc)
+        utc_offset = sc.get("utc_offset", "+8")
+        lines.append(
+            f"  下一次触发：{_format_next_trigger(next_trigger, language, utc_offset)}"
+            if language == "zh"
+            else f"  Next trigger: {_format_next_trigger(next_trigger, language, utc_offset)}"
+        )
 
         return "\n".join(lines)
 
