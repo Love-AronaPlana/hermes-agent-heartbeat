@@ -47,7 +47,8 @@ _DEFAULT_PAUSE_DURATION = 3600  # 1 hour default pause
 _DEFAULT_PROMPT = (
     "[Heartbeat 唤醒] 检查我们之前的对话、当前任务和已有计划，主动找出尚未完成或可以推进的事项并直接开始处理。"
     "优先完成用户已经明确提出但尚未完成的任务；如果没有明确待办，再选择一个有价值且安全的相关事项主动推进。"
-    "不要只是汇报状态或等待用户输入；完成后简要说明做了什么、结果和下一步。"
+    "如果所有事情都已完成，不要只停在那里：可以自己找点有意义的事情做，例如研究、学习、整理、优化、测试、创作，或者找点有趣的东西探索一下。"
+    "总之要保持主动，不要只是汇报状态或等待用户输入；完成后简要说明做了什么、结果和下一步。"
 )
 
 _SESSIONS_FILE = Path("~/.hermes/heartbeat/sessions.json").expanduser()
@@ -186,7 +187,7 @@ def _migrate_041_to_042(data: dict[str, Any]) -> dict[str, Any]:
 # v0.4.2: introduced the schema-migration framework.  Older files are
 # now upgraded forward through _SCHEMA_MIGRATIONS instead of wiped, so
 # a stale sessions.json keeps the user's enabled/interval/prompt config.
-_SESSIONS_FORMAT_VERSION = "0.4.6"
+_SESSIONS_FORMAT_VERSION = "0.4.7"
 
 # ── module state ───────────────────────────────────────────────────────────────
 
