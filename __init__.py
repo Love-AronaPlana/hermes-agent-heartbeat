@@ -185,7 +185,7 @@ def _migrate_041_to_042(data: dict[str, Any]) -> dict[str, Any]:
 # v0.4.2: introduced the schema-migration framework.  Older files are
 # now upgraded forward through _SCHEMA_MIGRATIONS instead of wiped, so
 # a stale sessions.json keeps the user's enabled/interval/prompt config.
-_SESSIONS_FORMAT_VERSION = "0.4.4"
+_SESSIONS_FORMAT_VERSION = "0.4.5"
 
 # ── module state ───────────────────────────────────────────────────────────────
 
@@ -982,8 +982,14 @@ def _cmd_xt(raw_args: str) -> str | None:
         sessions = _load_sessions()
         defaults = _session_defaults()
         if key in sessions:
+            # Older installs may contain a deliberately minimal entry such as
+            # {"enabled": false}. Merge defaults before enabling it; otherwise
+            # the acknowledgement itself raises KeyError("interval"), the hook
+            # fails, and the gateway later reports /xt as unknown.
+            merged = dict(defaults)
+            merged.update(sessions[key])
+            sessions[key] = merged
             sessions[key]["enabled"] = True
-            # Clear any pause
             sessions[key].pop("paused_until", None)
         else:
             sessions[key] = dict(defaults)
