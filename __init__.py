@@ -48,7 +48,7 @@ _DEFAULT_PROMPT_ZH = (
     "[Heartbeat 唤醒] 检查我们之前的对话、当前任务和已有计划，主动找出尚未完成或可以推进的事项并直接开始处理。"
     "优先完成用户已经明确提出但尚未完成的任务；如果没有明确待办，再选择一个有价值且安全的相关事项主动推进。"
     "如果所有事情都已完成，不要只停在那里：可以自己找点有意义的事情做，例如研究、学习、整理、优化、测试、创作，或者找点有趣的东西探索一下。"
-    "总之要保持主动，不要只是汇报状态或等待用户输入。只有在确实完成了有意义的工作、发现重要信息或需要用户决策时才发送简短总结；如果本次没有实质进展、没有新信息，也没有需要用户知道的事项，最终回复必须严格只输出 [SILENT]，不要附加任何文字。"
+    "总之要保持主动，不要只是汇报状态或等待用户输入。默认不要发送最终总结，不要为了证明自己运行过而打扰用户；只有在确实完成了用户可感知的实质工作、发现重要信息或风险，或需要用户决策时，才发送简短总结。除此之外，最终回复必须严格只输出 [SILENT]，不要附加任何文字。"
     "注意：这条规则只适用于自动 Heartbeat 唤醒，不适用于用户主动发送的消息或 /xt test、/xt stats 等命令。"
 )
 _DEFAULT_PROMPT_EN = (
@@ -56,8 +56,7 @@ _DEFAULT_PROMPT_EN = (
     "Find unfinished or actionable items and start working on them directly. "
     "Prioritize explicitly requested unfinished work; if there is no clear todo, choose one safe and valuable related task to advance. "
     "If everything is complete, do not just wait: research, learn, organize, optimize, test, create, or explore something useful. "
-    "Stay proactive instead of merely reporting status or waiting for input. Only send a brief summary when you made meaningful progress, found important information, or need a user decision. "
-    "If there is no substantive progress, new information, or user-facing item this cycle, the final response MUST be exactly [SILENT] with no additional text. "
+    "Stay proactive instead of merely reporting status or waiting for input. By default, do not send a final summary or interrupt the user just to prove that you ran. Only send a brief summary when you made genuinely user-visible substantive progress, found important information or a risk, or need a user decision. Otherwise, the final response MUST be exactly [SILENT] with no additional text. "
     "This rule applies only to automatic Heartbeat wakeups, not user messages or commands such as /xt test and /xt stats."
 )
 # Backward-compatible name for integrations that imported the old constant.

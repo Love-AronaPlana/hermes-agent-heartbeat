@@ -340,6 +340,7 @@ class TestPrompt:
         assert "[Heartbeat 唤醒]" in prompt
         assert "[SILENT]" in prompt
         assert "必须严格只输出 [SILENT]" in prompt
+        assert "默认不要发送最终总结" in prompt
         assert "只适用于自动 Heartbeat 唤醒" in prompt
 
     def test_default_prompt_can_be_english_with_silent_policy(self):
@@ -347,6 +348,7 @@ class TestPrompt:
         prompt = mod._prompt({"language": "en"})
         assert "[Heartbeat Wakeup]" in prompt
         assert "MUST be exactly [SILENT]" in prompt
+        assert "By default, do not send a final summary" in prompt
         assert "only to automatic Heartbeat wakeups" in prompt
 
     def test_custom_prompt_is_preserved(self):
