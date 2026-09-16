@@ -208,18 +208,27 @@ class TestNextTrigger:
         monkeypatch.setitem(mod._last_user_message, "telegram:1:", 1000.0)
         assert mod._fallback_next_trigger("telegram:1:", {"enabled": True, "interval": 900}) == 1900.0
 
-    def test_fallback_is_unscheduled_after_wakeup_or_pause(self, monkeypatch):
+    def test_fallback_remains_scheduled_after_wakeup(self, monkeypatch):
         mod = _load_plugin()
         monkeypatch.setitem(mod._last_user_message, "telegram:1:", 1000.0)
-        monkeypatch.setitem(mod._after_wake, "telegram:1:", True)
-        # A stale in-memory schedule must not beat the post-wakeup state.
         monkeypatch.setitem(mod.__dict__["_next_trigger_at"], "telegram:1:", 1001.0)
-        assert mod._fallback_next_trigger("telegram:1:", {"enabled": True, "interval": 900}) is None
-        monkeypatch.setitem(mod._after_wake, "telegram:1:", False)
+        assert mod._fallback_next_trigger("telegram:1:", {"enabled": True, "interval": 900}) == 1001.0
         assert mod._fallback_next_trigger(
             "telegram:1:",
             {"enabled": True, "interval": 900, "paused_until": "2099-01-01T00:00:00"},
         ) is None
+
+    def test_session_end_resets_timer_from_turn_end(self, monkeypatch):
+        mod = _load_plugin()
+        key = "telegram:1:"
+        source = types.SimpleNamespace(platform=mod.Platform.TELEGRAM, chat_id="1", thread_id=None)
+        mod._last_source = source
+        monkeypatch.setitem(mod._user_turn_pending, key, True)
+        monkeypatch.setattr(mod.time, "time", lambda: 5000.0)
+        monkeypatch.setattr(mod, "_get_session_config", lambda _key: {"enabled": True, "interval": 1800})
+        mod._on_session_end(session_id="session")
+        assert mod._last_user_message[key] == 5000.0
+        assert mod._next_trigger_at[key] == 6800.0
 
     def test_stats_and_test_show_next_trigger(self, tmp_path, monkeypatch):
         mod = _load_plugin()
