@@ -360,8 +360,10 @@ _next_trigger_at: dict[str, float | None] = {}  # key -> next scheduled automati
 _gateway_ref: Any = None  # last seen gateway (for slash command)
 _sources: dict[str, Any] = {}  # key -> SessionSource for manual trigger
 _last_source: Any = None  # source of the last incoming user message
+_user_turn_pending: dict[str, bool] = {}  # user turn started, await session finalization
 _start_lock: asyncio.Lock = asyncio.Lock()  # prevent race on loop creation
-_after_wake: dict[str, bool] = {}  # key -> True if heartbeat just fired, wait for next user msg
+# Heartbeats run continuously. A user message only resets the countdown; it does
+# not gate whether the next automatic wake is allowed to fire.
 
 # ── config helpers ─────────────────────────────────────────────────────────────
 
@@ -693,11 +695,8 @@ def _format_next_trigger(
 
 def _fallback_next_trigger(key: str, sc: dict[str, Any]) -> float | None:
     """Estimate the next trigger when the loop has not published one yet."""
-    # After a wakeup the loop deliberately waits for a new user message;
-    # do not let a stale in-memory schedule override that state and render
-    # "due now" forever in /xt stats. Check this before the cached schedule.
-    if _after_wake.get(key, False):
-        return None
+    # Heartbeats continue autonomously after every wakeup. The cached schedule
+    # is therefore valid even when no new user message has arrived.
     if not bool(sc.get("enabled", False)):
         return None
     if _check_paused(sc) is not None:
@@ -811,7 +810,7 @@ def _cancel_loop_for_key(key: str) -> None:
     _triggers.pop(key, None)
     _sources.pop(key, None)
     _last_user_message.pop(key, None)
-    _after_wake.pop(key, None)
+    _user_turn_pending.pop(key, None)
     _clear_next_trigger(key)
 
 
@@ -897,28 +896,15 @@ async def _run(gateway: Any, source: Any, key: str) -> None:
                 continue
 
             # ── wait for heartbeat ──
-            # 1) If heartbeat just fired, wait for next user message.
-            # 2) Wait for agent to finish processing (user msg or wake).
-            # 3) Count down from _last_user_message.
+            # Heartbeats run continuously. A user turn updates the countdown
+            # while it is in progress; its finalization hook moves the anchor
+            # to the end of the turn so the next wake is interval seconds later.
             is_manual = False
             interval = _interval(sc)
             current_source = _sources.get(key, source)  # refresh before countdown
-            # Publish a provisional schedule immediately; it is refreshed below
-            # whenever the countdown is reset or a wake is delivered.
             last_msg = _last_user_message.get(key, 0.0)
             _set_next_trigger(key, (last_msg + interval) if last_msg > 0.0 else (time.time() + interval))
             while True:
-                # After a heartbeat wake, do NOT restart the countdown —
-                # wait for the next user message to reset the timer.
-                if _after_wake.get(key, False):
-                    try:
-                        await asyncio.wait_for(event.wait(), timeout=5.0)
-                        event.clear()
-                        is_manual = True
-                        break  # manual trigger fires immediately
-                    except asyncio.TimeoutError:
-                        continue  # re-check _after_wake
-
                 # Wait for agent to finish processing (user msg or wake).
                 # Uses the gateway's session key format, not the plugin's
                 # shorter key, to correctly match _running_agents entries.
@@ -1002,8 +988,11 @@ async def _run(gateway: Any, source: Any, key: str) -> None:
                         adapter, text=prompt, session_id=session_id, source=current_source
                     )
                     _heartbeat_wake_sessions.add(session_id)
-                    _after_wake[key] = True
-                    _clear_next_trigger(key)
+                    # Start the next autonomous cycle immediately after this
+                    # wakeup completes. A user turn may move this anchor later.
+                    next_anchor = time.time()
+                    _last_user_message[key] = next_anchor
+                    _set_next_trigger(key, next_anchor + _interval(sc))
                     _track_stat(key, "wakeup")
                     logger.info("agent-heartbeat: delivered to %s%s", key, " [manual]" if is_manual else "")
                 except Exception as exc:
@@ -1023,7 +1012,7 @@ async def _run(gateway: Any, source: Any, key: str) -> None:
             _triggers.pop(key, None)
             _sources.pop(key, None)
             _last_user_message.pop(key, None)
-            _after_wake.pop(key, None)
+            _user_turn_pending.pop(key, None)
             _clear_next_trigger(key)
         logger.info("agent-heartbeat: loop ended for %s", key)
 
@@ -1107,7 +1096,10 @@ def _on_pre_gateway_dispatch(event: Any, gateway: Any, **_: Any) -> dict | None:
         message_ts = datetime.now().timestamp()
         _last_user_message[key] = message_ts
         _track_stat(key, "last_user_message_ts", message_ts)
-        _after_wake[key] = False  # allow heartbeat to fire again after user msg
+        # The timer is provisionally reset now, then anchored again at turn
+        # finalization so a long user interaction gets a full interval after
+        # the conversation actually ends.
+        _user_turn_pending[key] = True
         # Keep source fresh so wake uses the latest routing metadata
         _sources[key] = source
         # The countdown starts from this user message. The loop refreshes this
@@ -1167,13 +1159,21 @@ def _on_session_reset(**kwargs: Any) -> None:
 
 
 def _on_session_end(**kwargs: Any) -> None:
-    """Observe turn finalization without creating chat output."""
+    """Finalize a user-turn timer without creating chat output."""
     session_id = kwargs.get("session_id", "")
-    completed = kwargs.get("completed", False)
     if session_id:
         # Do not clear the marker before transform_llm_output runs; on_session_end
         # is emitted during finalization and may precede the response filter.
         logger.debug("agent-heartbeat: turn finalized for session %s", session_id)
+    key = _get_current_key()
+    if key is not None and _user_turn_pending.pop(key, False):
+        # Give the user a full interval after the actual conversation ends,
+        # rather than firing based on the message-start timestamp.
+        anchor = time.time()
+        _last_user_message[key] = anchor
+        sc = _get_session_config(key)
+        if sc.get("enabled", False):
+            _set_next_trigger(key, anchor + _interval(sc))
 
 
 def _on_transform_llm_output(response_text: Any = "", session_id: str = "", **kwargs: Any) -> str | None:
