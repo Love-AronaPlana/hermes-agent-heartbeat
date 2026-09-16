@@ -46,24 +46,28 @@ _DEFAULT_PAUSE_DURATION = 3600  # 1 hour default pause
 # (config.yaml: ``agent_heartbeat.default_prompt``) or per-session
 # (``/xt set prompt=...``).
 _DEFAULT_PROMPT_ZH = (
-    "[Heartbeat 唤醒] 先检查之前的对话、当前任务、已有计划和最近进展，主动判断现在最值得推进的事情并直接开始处理。"
-    "优先完成用户明确提出但尚未完成的任务；如果没有明确待办，不要机械重复上一次的检查或操作，要有前瞻性地自主选择下一件有价值、安全且能带来实际进展的事情。"
-    "可以根据上下文自行决定做什么，例如研究学习、发现问题、整理资料、优化代码或流程、补充测试、创作内容、规划下一步，或者探索其他有意义的新方向；不必局限于之前的任务类型，也不必等待用户指定。"
-    "如果确实完成了任何实际工作（包括检查、研究、整理、测试、修改或推进任务），都必须发送一段简短总结，把做了什么和结果告诉用户；只有没有做成任何事情、没有新信息时，才严格只输出 [SILENT]。"
-    "[SILENT] 是最终输出哨兵：必须单独作为完整回复，不能与总结、解释、工具结果或任何其他文字放在同一条回复中，也不能放在总结末尾。"
-    "注意：这条规则只适用于自动 Heartbeat 唤醒，不适用于用户主动发送的消息或 /xt test、/xt stats 等命令。"
+    "[Heartbeat 唤醒] 这是一次自主工作循环，不是对用户上一条消息的普通回复。"
+    "如果配置的 heartbeat 提示词文件存在，必须优先、完整地遵守该文件中的要求；文件要求与本默认提示词冲突时，以文件要求为准。"
+    "先识别真正尚未完成、值得推进的任务，直接开始做，不要把刚刚已经确定、回答过或核对过的内容再重复一遍。"
+    "除非它是当前任务的实际阻塞点，禁止无目的地重新检查模型、provider、reasoning、配置、环境或上一轮已经得出的结论，也不要为了证明自己工作过而重复检查。"
+    "如果没有现成待办，可以自由选择安全且有实际价值的方向，并主动创建自己的工作、计划、研究、整理、测试、代码改进或其他可持续推进的任务；不必等待用户逐项指定。"
+    "每次唤醒都应尽量产生真实进展，而不是只做状态复述。完成了任何实际工作后，简短汇报做了什么和结果；确实没有任何值得做的事时，严格只输出 [SILENT]。"
+    "[SILENT] 必须单独作为完整回复，不能与总结、解释或任何其他文字混在一起。"
+    "这套默认规则只适用于自动 Heartbeat 唤醒和 /xt 的立即触发，不适用于普通用户消息或 /xt test、/xt stats 等管理命令。"
 )
 _DEFAULT_PROMPT_EN = (
-    "[Heartbeat Wakeup] Review our previous conversation, current tasks, and existing plans. "
-    "Find unfinished or actionable items and start working on them directly. "
-    "Prioritize explicitly requested unfinished work; if there is no clear todo, choose one safe and valuable related task to advance. "
-    "If everything is complete, do not just wait: research, learn, organize, optimize, test, create, or explore something useful. "
-    "If you did any actual work at all (including checking, researching, organizing, testing, modifying, or advancing a task), you MUST send a brief summary telling the user what you did and the result; use [SILENT] only when nothing was accomplished and there is no new information. "
-    "[SILENT] is a final-output sentinel: it MUST be the complete response by itself, never mixed with a summary, explanation, tool result, or any other text, and never appended after a summary. "
-    "This rule applies only to automatic Heartbeat wakeups, not user messages or commands such as /xt test and /xt stats."
+    "[Heartbeat Wakeup] This is an autonomous work cycle, not an ordinary reply to the user's latest message. "
+    "If the configured heartbeat prompt file exists, follow its requirements first and in full; when it conflicts with this default prompt, the file wins. "
+    "Identify genuinely unfinished and worthwhile work and start it directly. Do not repeat anything that was just established, answered, or checked. "
+    "Do not recheck the model, provider, reasoning, configuration, environment, or conclusions from the previous turn unless that is an actual blocker for the current task. "
+    "If there is no existing todo, freely choose a safe, valuable direction and create your own work, plan, research, organization, tests, code improvements, or other tasks that can make real progress; do not wait for the user to specify every step. "
+    "Aim for real progress rather than status repetition. After you do any actual work, briefly report what you did and the result; if there is truly nothing worthwhile to do, output only [SILENT]. "
+    "[SILENT] must be the complete response by itself. "
+    "This default applies only to automatic Heartbeat wakeups and immediate /xt triggers, not ordinary user messages or management commands such as /xt test and /xt stats."
 )
 # Backward-compatible name for integrations that imported the old constant.
 _DEFAULT_PROMPT = _DEFAULT_PROMPT_ZH
+_HEARTBEAT_FILE = Path("~/.hermes/heartbeat/HEARTBEAT.md").expanduser()
 
 # Automatic Heartbeat turns are the only turns governed by this plugin's
 # silence contract.  The gateway's final-response filter understands the
@@ -519,8 +523,20 @@ def _to_minutes(t: str) -> int:
 
 
 def _prompt(sc: dict[str, Any]) -> str:
-    """Read prompt from file, multi-prompt rotation, or inline string."""
-    # Try multi-prompt rotation first
+    """Read the global HEARTBEAT.md first, then session prompt sources."""
+    # HEARTBEAT.md is the operator-controlled instruction file. When it exists,
+    # it always takes precedence over inline prompts and per-session rotation.
+    try:
+        text = _HEARTBEAT_FILE.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        text = ""
+    except OSError:
+        logger.exception("agent-heartbeat: HEARTBEAT.md read failed: %s", _HEARTBEAT_FILE)
+        text = ""
+    if text:
+        return text
+
+    # Try multi-prompt rotation next
     prompt_files = sc.get("prompt_files", []) or []
     if prompt_files and isinstance(prompt_files, list):
         # Filter out empty strings
