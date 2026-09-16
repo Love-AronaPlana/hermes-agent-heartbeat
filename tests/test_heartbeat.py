@@ -211,6 +211,8 @@ class TestNextTrigger:
         mod = _load_plugin()
         monkeypatch.setitem(mod._last_user_message, "telegram:1:", 1000.0)
         monkeypatch.setitem(mod._after_wake, "telegram:1:", True)
+        # A stale in-memory schedule must not beat the post-wakeup state.
+        monkeypatch.setitem(mod.__dict__["_next_trigger_at"], "telegram:1:", 1001.0)
         assert mod._fallback_next_trigger("telegram:1:", {"enabled": True, "interval": 900}) is None
         monkeypatch.setitem(mod._after_wake, "telegram:1:", False)
         assert mod._fallback_next_trigger(

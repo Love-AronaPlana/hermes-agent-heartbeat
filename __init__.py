@@ -646,17 +646,18 @@ def _format_next_trigger(
 
 def _fallback_next_trigger(key: str, sc: dict[str, Any]) -> float | None:
     """Estimate the next trigger when the loop has not published one yet."""
-    scheduled = _next_trigger_at.get(key)
-    if scheduled is not None:
-        return scheduled
-    if not bool(sc.get("enabled", False)):
-        return None
     # After a wakeup the loop deliberately waits for a new user message;
-    # the previous message timestamp must not be presented as a stale trigger.
+    # do not let a stale in-memory schedule override that state and render
+    # "due now" forever in /xt stats. Check this before the cached schedule.
     if _after_wake.get(key, False):
+        return None
+    if not bool(sc.get("enabled", False)):
         return None
     if _check_paused(sc) is not None:
         return None
+    scheduled = _next_trigger_at.get(key)
+    if scheduled is not None:
+        return scheduled
     last_message = _last_user_message.get(key)
     if last_message is None:
         # Preserve the estimate across a gateway restart when available.
