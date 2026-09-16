@@ -436,33 +436,18 @@ def _format_source(key: str) -> str:
 
 
 def _is_session_active(session_key: str) -> bool:
-    """Check if a session is configured and enabled.
+    """Return whether the user explicitly enabled Heartbeat for this session.
 
-    A session is active if EITHER:
-      * the global master switch is off (caller returned False before any
-        per-session lookup), or
-      * the per-session config has ``enabled=True``, or
-      * the per-session config is missing AND the user has never explicitly
-        disabled it for this key. We must NOT default to False on a missing
-        config: when ``sessions.json`` is empty (first run, post-upgrade
-        version mismatch, fresh install) the loop would silently never
-        start, even though the default in ``_session_defaults`` is True.
-        We instead return True when the key is absent and the user has not
-        recorded an explicit ``enabled=False`` for it.
+    A missing entry is intentionally inactive.  Otherwise every ordinary
+    message would silently start a Heartbeat loop after a restart or after the
+    session file was cleared, while ``/xt config`` and ``/xt list`` report that
+    no session is configured.
     """
     g = _global_config()
     if not bool(g.get("enabled", True)):
         return False
-    sessions = _load_sessions()
-    s = sessions.get(session_key)
-    if s is None:
-        # No explicit config for this session yet — treat as active by
-        # default so heartbeat actually starts on a clean install or
-        # after the version-mismatch wipe. The opt-out is still local:
-        # setting ``enabled: false`` for the key in sessions.json
-        # short-circuits this branch.
-        return True
-    return bool(s.get("enabled", False))
+    session = _load_sessions().get(session_key)
+    return bool(session and session.get("enabled", False))
 
 
 def _adapter_for_source(gateway: Any, source: Any) -> Any:
@@ -520,6 +505,21 @@ def _prompt(sc: dict[str, Any]) -> str:
     if not inline or inline == _DEFAULT_PROMPT_ZH:
         return _default_prompt(_normalize_language(sc.get("language", "zh")))
     return inline
+
+
+def _parse_interval_value(value: Any) -> int | float:
+    """Parse an interval as seconds, accepting optional s/m/h suffixes."""
+    text = str(value).strip().lower()
+    if not text:
+        raise ValueError("empty interval")
+    multiplier = 1
+    if text[-1:] in ("s", "m", "h"):
+        multiplier = {"s": 1, "m": 60, "h": 3600}[text[-1]]
+        text = text[:-1].strip()
+    parsed = float(text) * multiplier
+    if not math.isfinite(parsed) or parsed < 0:
+        raise ValueError("invalid interval")
+    return int(parsed) if parsed.is_integer() else parsed
 
 
 def _interval(sc: dict[str, Any]) -> float:
@@ -1590,7 +1590,9 @@ def _cmd_xt(raw_args: str) -> str | None:
         try:
             if cfg_key in ("enabled", "idle_auto_pause_enabled"):
                 cfg_val = cfg_val.lower() in ("true", "1", "yes")
-            elif cfg_key in ("interval", "idle_auto_pause_minutes"):
+            elif cfg_key == "interval":
+                cfg_val = _parse_interval_value(cfg_val)
+            elif cfg_key == "idle_auto_pause_minutes":
                 cfg_val = int(cfg_val)
             elif cfg_key == "prompt_files":
                 cfg_val = [p.strip() for p in cfg_val.split(",") if p.strip()]

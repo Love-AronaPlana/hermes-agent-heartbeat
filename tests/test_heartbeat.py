@@ -260,6 +260,13 @@ class TestInterval:
         mod = _load_plugin()
         assert mod._interval({"interval": 1800}) == 1800.0
 
+    def test_interval_value_accepts_time_suffixes(self):
+        mod = _load_plugin()
+        parse_interval = mod.__dict__["_parse_interval_value"]
+        assert parse_interval("1800s") == 1800
+        assert parse_interval("30m") == 1800
+        assert parse_interval("1h") == 3600
+
     def test_clamped_min(self):
         mod = _load_plugin()
         assert mod._interval({"interval": 5}) == 60.0
@@ -396,6 +403,17 @@ class TestCmdHeartbeat:
         with patch.object(mod, "_SESSIONS_FILE", test_file):
             result = mod._cmd_xt("list")
             assert "set" in result
+
+    def test_missing_session_is_not_active(self, tmp_path):
+        mod = _load_plugin()
+        test_file = tmp_path / "sessions.json"
+        key = "telegram:1:"
+        with patch.object(mod, "_SESSIONS_FILE", test_file):
+            assert mod.__dict__["_is_session_active"](key) is False
+            mod.__dict__["_save_sessions"]({key: {"enabled": True}})
+            assert mod.__dict__["_is_session_active"](key) is True
+            mod.__dict__["_save_sessions"]({key: {"enabled": False}})
+            assert mod.__dict__["_is_session_active"](key) is False
 
     def test_set_no_context(self):
         mod = _load_plugin()
