@@ -788,8 +788,10 @@ def _cancel_loop_for_key(key: str) -> None:
 def _start_loop(gateway: Any, source: Any, key: str) -> None:
     """Start a heartbeat loop for *key* if one is not already running.
 
-    Always updates ``_sources[key]`` so the loop sees the latest routing
-    metadata, then schedules task creation under ``_start_lock``.
+    The task is registered synchronously before returning. This matters for
+    ``/xt stats`` immediately after a Gateway restart: the command itself must
+    be able to re-bind an explicitly configured session, rather than reporting
+    a stale persisted countdown while the in-memory loop is absent.
     """
     _sources[key] = source  # ensure source is fresh
     task = _tasks.get(key)
@@ -797,18 +799,10 @@ def _start_loop(gateway: Any, source: Any, key: str) -> None:
         return  # already running
     try:
         loop = asyncio.get_running_loop()
-
-        async def _start_locked() -> None:
-            async with _start_lock:
-                t = _tasks.get(key)
-                if t is not None and not t.done():
-                    return
-                _tasks[key] = asyncio.create_task(
-                    _run(gateway, source, key), name=f"agent-heartbeat:{key}"
-                )
-                logger.info("agent-heartbeat: bound to session %s", key)
-
-        loop.create_task(_start_locked())
+        _tasks[key] = loop.create_task(
+            _run(gateway, source, key), name=f"agent-heartbeat:{key}"
+        )
+        logger.info("agent-heartbeat: bound to session %s", key)
     except RuntimeError:
         logger.warning("agent-heartbeat: no running event loop, skip binding %s", key)
 
@@ -1024,6 +1018,13 @@ def _on_pre_gateway_dispatch(event: Any, gateway: Any, **_: Any) -> dict | None:
     text = (getattr(event, "text", "") or "").strip()
     xt_args = _extract_xt_command(text)
     if xt_args is not None:
+        # A restart cancels in-memory asyncio tasks but deliberately preserves
+        # sessions.json. Re-bind an explicitly configured chat before readonly
+        # commands inspect `_tasks`; otherwise `/xt stats` says "idle" and bare
+        # `/xt` says "no active" even though the channel was never unset.
+        key = _session_key(source)
+        if _is_session_active(key):
+            _start_loop(gateway, source, key)
         response_text = _cmd_xt(xt_args)
         if response_text:
             # Send reply via adapter, then skip built-in dispatch.

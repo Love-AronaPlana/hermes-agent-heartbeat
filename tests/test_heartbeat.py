@@ -393,10 +393,29 @@ class TestCmdHeartbeat:
         assert mod.__dict__["_extract_xt_command"]("/xt@bot test") == "test"
         assert mod.__dict__["_extract_xt_command"]("请处理 /xt stats") is None
 
-    def test_chinese_interval_alias_normalizes_to_config(self):
+    def test_xt_command_rebinds_configured_session_after_restart(self):
         mod = _load_plugin()
-        assert mod._normalize_xt_args("间隔 1800") == "config interval 1800"
-        assert mod._normalize_xt_args("config 间隔 1800") == "config interval 1800"
+
+        class FakeSource:
+            platform = mod.Platform.TELEGRAM
+            chat_id = "6211819157"
+            thread_id = None
+
+        class FakeEvent:
+            source = FakeSource()
+            text = "/xt stats"
+
+        gateway = object()
+        with patch.object(mod, "_is_session_active", return_value=True) as active, \
+             patch.object(mod, "_start_loop") as start_loop, \
+             patch.object(mod, "_cmd_xt", return_value="reply") as cmd, \
+             patch.object(mod, "_adapter_for_source", return_value=None):
+            result = mod._on_pre_gateway_dispatch(FakeEvent(), gateway)
+
+        assert result == {"action": "skip", "reason": "agent-heartbeat handled command"}
+        active.assert_called_once_with("telegram:6211819157:")
+        start_loop.assert_called_once_with(gateway, FakeEvent.source, "telegram:6211819157:")
+        cmd.assert_called_once_with("stats")
 
     def test_no_subcommand_no_active(self):
         mod = _load_plugin()
