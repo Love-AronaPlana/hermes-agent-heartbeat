@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.2
+
+### Added
+- Register `/xt` with the Telegram command menu's highest plugin priority so it appears first by default.
+
 ## 0.3.2 (2026-08-28)
 
 ### 🔧 Changed

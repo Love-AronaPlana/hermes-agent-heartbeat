@@ -489,8 +489,8 @@ class TestRegister:
             def register_hook(self, name, callback):
                 self.hooks.append((name, callback))
 
-            def register_command(self, name, handler, description="", args_hint=""):
-                self.commands.append((name, handler, description, args_hint))
+            def register_command(self, name, handler, description="", args_hint="", **kwargs):
+                self.commands.append((name, handler, description, args_hint, kwargs))
 
         ctx = FakeCtx()
         mod.register(ctx)
@@ -500,3 +500,4 @@ class TestRegister:
         ]
         assert len(ctx.commands) == 1  # /xt registered as a normal command
         assert ctx.commands[0][0] == "xt"
+        assert ctx.commands[0][4]["menu_priority"] == 0

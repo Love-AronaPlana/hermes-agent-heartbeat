@@ -1588,4 +1588,5 @@ def register(ctx) -> None:
         handler=_cmd_xt,
         description="Persistent heartbeat: periodic wakeups in this conversation",
         args_hint="[set|unset|list|config|stats|test|pause|resume]",
+        menu_priority=0,  # Telegram: show /xt first by default.
     )
