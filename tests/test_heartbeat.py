@@ -419,6 +419,29 @@ class TestCmdHeartbeat:
         start_loop.assert_called_once_with(gateway, FakeEvent.source, "telegram:6211819157:")
         cmd.assert_called_once_with("stats")
 
+    def test_session_reset_rebinds_active_loop(self):
+        mod = _load_plugin()
+        class FakeSource:
+            platform = mod.__dict__["Platform"].TELEGRAM
+            chat_id = "6211819157"
+            thread_id = None
+        gateway = object()
+        mod.__dict__["_gateway_ref"] = gateway
+        mod.__dict__["_last_source"] = FakeSource()
+        with patch.object(mod, "_is_session_active", return_value=True) as active, \
+             patch.object(mod, "_start_loop") as start_loop:
+            mod.__dict__["_on_session_reset"](reason="new_session")
+        active.assert_called_once_with("telegram:6211819157:")
+        start_loop.assert_called_once_with(gateway, mod.__dict__["_last_source"], "telegram:6211819157:")
+
+    def test_session_reset_without_cached_source_is_safe(self):
+        mod = _load_plugin()
+        mod._gateway_ref = None
+        mod._last_source = None
+        with patch.object(mod, "_start_loop") as start_loop:
+            mod._on_session_reset(reason="new_session")
+        start_loop.assert_not_called()
+
     def test_no_subcommand_no_active(self):
         mod = _load_plugin()
         result = mod._cmd_xt("")
@@ -548,7 +571,7 @@ class TestRegister:
         mod.register(ctx)
 
         assert [name for name, _ in ctx.hooks] == [
-            "pre_gateway_dispatch", "on_session_finalize", "on_session_end"
+            "pre_gateway_dispatch", "on_session_finalize", "on_session_reset", "on_session_end"
         ]
         assert len(ctx.commands) == 1  # /xt registered as a normal command
         assert ctx.commands[0][0] == "xt"

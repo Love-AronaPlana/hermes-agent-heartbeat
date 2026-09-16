@@ -1001,11 +1001,18 @@ async def _run(gateway: Any, source: Any, key: str) -> None:
 
 def _on_pre_gateway_dispatch(event: Any, gateway: Any, **_: Any) -> dict | None:
     """Intercept /xt commands, then bind heartbeat to sessions."""
-    global _last_source
+    global _last_source, _gateway_ref
 
     source = getattr(event, "source", None)
     if source is None:
         return
+
+    # Keep the live gateway available for the session-reset hook.  ``/new``
+    # reaches this hook before rotating the session, then emits
+    # ``on_session_reset`` after the new session has been created.  Caching the
+    # gateway here lets us restart the loop without requiring another user
+    # message.
+    _gateway_ref = gateway
 
     # Record the current message's source BEFORE interception so /xt command
     # handlers (set/status/...) know which conversation they came from.
@@ -1084,8 +1091,8 @@ def _on_session_finalize(**kwargs: Any) -> None:
     on gateway shutdown.  The payload carries ``session_id``, ``platform``,
     ``reason``, ``old_session_id``, ``new_session_id`` — but NOT the
     plugin-level ``platform:chat_id:thread`` key, so we cancel ALL active
-    loops.  The next user message in any configured chat will re-start its
-    loop via ``_on_pre_gateway_dispatch`` → ``_start_loop``.
+    loops.  The matching ``on_session_reset`` hook immediately re-starts
+    configured loops after the replacement session exists.
     """
     if not _tasks:
         return
@@ -1097,6 +1104,28 @@ def _on_session_finalize(**kwargs: Any) -> None:
         "agent-heartbeat: cancelled %d loops on session finalize (reason=%s)",
         count, reason,
     )
+
+
+def _on_session_reset(**kwargs: Any) -> None:
+    """Restart the configured heartbeat after ``/new`` or ``/reset``.
+
+    ``on_session_finalize`` runs first and cancels the old loop so it cannot
+    write into the old conversation.  Hermes then creates the replacement
+    session and invokes ``on_session_reset``.  Reuse the source and gateway
+    captured by ``pre_gateway_dispatch`` to bind a fresh loop immediately — no
+    extra user message is required.
+    """
+    gateway = _gateway_ref
+    source = _last_source
+    if gateway is None or source is None:
+        logger.debug("agent-heartbeat: cannot restore after session reset: no gateway/source")
+        return
+
+    key = _session_key(source)
+    if not _is_session_active(key):
+        return
+    _start_loop(gateway, source, key)
+    logger.info("agent-heartbeat: restored loop after session reset for %s", key)
 
 
 def _on_session_end(**kwargs: Any) -> None:
@@ -1641,6 +1670,10 @@ def register(ctx) -> None:
     # on_session_finalize fires on /new, /reset, and gateway shutdown —
     # cancel all heartbeat loops so stale wakes never land in a reset session.
     ctx.register_hook("on_session_finalize", _on_session_finalize)
+    # /new and /reset invoke this after the replacement session is created.
+    # Rebind the configured loop immediately; the user need not send another
+    # message just to wake the plugin back up.
+    ctx.register_hook("on_session_reset", _on_session_reset)
     # on_session_end fires at each turn finalization (agent done replying).
     # Kept as a lightweight observer; the heartbeat loop does NOT depend on it.
     ctx.register_hook("on_session_end", _on_session_end)
