@@ -20,6 +20,7 @@ import json
 import logging
 import math
 import random
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -48,7 +49,8 @@ _DEFAULT_PROMPT_ZH = (
     "[Heartbeat 唤醒] 检查我们之前的对话、当前任务和已有计划，主动找出尚未完成或可以推进的事项并直接开始处理。"
     "优先完成用户已经明确提出但尚未完成的任务；如果没有明确待办，再选择一个有价值且安全的相关事项主动推进。"
     "如果所有事情都已完成，不要只停在那里：可以自己找点有意义的事情做，例如研究、学习、整理、优化、测试、创作，或者找点有趣的东西探索一下。"
-    "总之要保持主动，不要只是汇报状态或等待用户输入。默认不要发送最终总结，不要为了证明自己运行过而打扰用户；只有在确实完成了用户可感知的实质工作、发现重要信息或风险，或需要用户决策时，才发送简短总结。除此之外，最终回复必须严格只输出 [SILENT]，不要附加任何文字。"
+    "如果确实完成了任何实际工作（包括检查、研究、整理、测试、修改或推进任务），都必须发送一段简短总结，把做了什么和结果告诉用户；只有没有做成任何事情、没有新信息时，才严格只输出 [SILENT]。"
+    "[SILENT] 是最终输出哨兵：必须单独作为完整回复，不能与总结、解释、工具结果或任何其他文字放在同一条回复中，也不能放在总结末尾。"
     "注意：这条规则只适用于自动 Heartbeat 唤醒，不适用于用户主动发送的消息或 /xt test、/xt stats 等命令。"
 )
 _DEFAULT_PROMPT_EN = (
@@ -56,11 +58,24 @@ _DEFAULT_PROMPT_EN = (
     "Find unfinished or actionable items and start working on them directly. "
     "Prioritize explicitly requested unfinished work; if there is no clear todo, choose one safe and valuable related task to advance. "
     "If everything is complete, do not just wait: research, learn, organize, optimize, test, create, or explore something useful. "
-    "Stay proactive instead of merely reporting status or waiting for input. By default, do not send a final summary or interrupt the user just to prove that you ran. Only send a brief summary when you made genuinely user-visible substantive progress, found important information or a risk, or need a user decision. Otherwise, the final response MUST be exactly [SILENT] with no additional text. "
+    "If you did any actual work at all (including checking, researching, organizing, testing, modifying, or advancing a task), you MUST send a brief summary telling the user what you did and the result; use [SILENT] only when nothing was accomplished and there is no new information. "
+    "[SILENT] is a final-output sentinel: it MUST be the complete response by itself, never mixed with a summary, explanation, tool result, or any other text, and never appended after a summary. "
     "This rule applies only to automatic Heartbeat wakeups, not user messages or commands such as /xt test and /xt stats."
 )
 # Backward-compatible name for integrations that imported the old constant.
 _DEFAULT_PROMPT = _DEFAULT_PROMPT_ZH
+
+# Automatic Heartbeat turns are the only turns governed by this plugin's
+# silence contract.  The gateway's final-response filter understands the
+# ``[SILENT]`` sentinel, but it cannot tell whether a turn came from this
+# plugin; keep that provenance here and normalize malformed mixed responses
+# before they reach the adapter.
+_heartbeat_wake_sessions: set[str] = set()
+_SILENT_LINE_RE = re.compile(r"^\s*\[SILENT\]\s*$", re.IGNORECASE)
+
+# Hook context is populated before the synthetic internal event is admitted and
+# consumed by the final-output hook.  It is deliberately process-local: normal
+# user turns and explicit /xt commands never inherit automatic-heartbeat state.
 
 _LANGUAGE_ALIASES = {
     "zh": "zh", "zh-cn": "zh", "中文": "zh", "chinese": "zh",
@@ -94,20 +109,36 @@ _XT_CONFIG_KEY_ALIASES = {
 
 
 def _extract_xt_command(text: str) -> str | None:
-    """Return the args of a standalone ``/xt`` line in a Telegram text batch.
+    """Return a command only when the entire message is an ``/xt`` command.
 
-    Telegram's adapter may merge messages received in one short burst with a
-    newline.  A command must still win over the preceding ordinary text, but
-    ``/xt`` embedded in a normal sentence must not be treated as a command.
+    Do not steal a command from a normal message.  For example, ``问题反馈\n/xt
+    stats`` and ``/xt stats 其他内容`` remain ordinary user messages; only a
+    message whose trimmed content starts with ``/xt`` and contains no unrelated
+    text is dispatched to the plugin command handler.
     """
-    for line in (text or "").splitlines():
-        parts = line.strip().split(None, 1)
-        if not parts:
-            continue
-        command = parts[0].split("@", 1)[0].lower()
-        if command == "/xt":
-            return parts[1].strip() if len(parts) > 1 else ""
-    return None
+    stripped = (text or "").strip()
+    if not stripped:
+        return None
+    lines = [line.strip() for line in stripped.splitlines() if line.strip()]
+    if len(lines) != 1:
+        return None
+    parts = lines[0].split(None, 1)
+    command = parts[0].split("@", 1)[0].lower()
+    if command != "/xt":
+        return None
+    args = parts[1].strip() if len(parts) > 1 else ""
+    if not args:
+        return ""
+    raw_parts = args.split(None, 1)
+    subcmd = raw_parts[0].split("=", 1)[0].lower()
+    canonical = _XT_SUBCOMMAND_ALIASES.get(subcmd, subcmd)
+    rest = raw_parts[1].strip() if len(raw_parts) > 1 else ""
+    no_arg_commands = {"help", "list", "stats", "test", "status", "unset", "resume"}
+    if canonical in no_arg_commands and rest:
+        return None
+    if canonical not in no_arg_commands | {"set", "config", "pause", "language", "interval"}:
+        return None
+    return args
 
 
 def _normalize_xt_args(raw_args: str) -> str:
@@ -970,6 +1001,7 @@ async def _run(gateway: Any, source: Any, key: str) -> None:
                     await deliver_wake(
                         adapter, text=prompt, session_id=session_id, source=current_source
                     )
+                    _heartbeat_wake_sessions.add(session_id)
                     _after_wake[key] = True
                     _clear_next_trigger(key)
                     _track_stat(key, "wakeup")
@@ -1006,6 +1038,12 @@ def _on_pre_gateway_dispatch(event: Any, gateway: Any, **_: Any) -> dict | None:
     source = getattr(event, "source", None)
     if source is None:
         return
+
+    # Automatic Heartbeat wakes are internal events. They must be admitted and
+    # executed, but their trigger and all intermediate tool/progress surfaces
+    # are implementation details, never chat output.
+    if getattr(event, "internal", False) and getattr(event, "metadata", {}).get("heartbeat_session_id"):
+        event.metadata["suppress_user_visible_progress"] = True
 
     # Keep the live gateway available for the session-reset hook.  ``/new``
     # reaches this hook before rotating the session, then emits
@@ -1129,15 +1167,39 @@ def _on_session_reset(**kwargs: Any) -> None:
 
 
 def _on_session_end(**kwargs: Any) -> None:
-    """Log agent turn finalization.  Per hooks.md this fires at each turn
-    completion (completed/failed/interrupted).  We intentionally do NOT
-    cancel loops here — that would kill the heartbeat after every wake.
-    Session-boundary cancellation is handled by ``_on_session_finalize``.
-    """
+    """Observe turn finalization without creating chat output."""
     session_id = kwargs.get("session_id", "")
     completed = kwargs.get("completed", False)
-    if completed:
+    if session_id:
+        # Do not clear the marker before transform_llm_output runs; on_session_end
+        # is emitted during finalization and may precede the response filter.
         logger.debug("agent-heartbeat: turn finalized for session %s", session_id)
+
+
+def _on_transform_llm_output(response_text: Any = "", session_id: str = "", **kwargs: Any) -> str | None:
+    """Enforce the Heartbeat silent contract at the last agent-output boundary.
+
+    Only sessions whose current wake is marked by this plugin are eligible.  A
+    normal user turn can therefore say ``[SILENT]`` as ordinary content, while a
+    Heartbeat turn cannot leak a mixed response such as ``summary\\n[SILENT]``.
+    """
+    key = str(session_id or "")
+    if key not in _heartbeat_wake_sessions:
+        return None
+    text = str(response_text or "").strip()
+    if not text:
+        _heartbeat_wake_sessions.discard(key)
+        return "[SILENT]"
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if lines and all(_SILENT_LINE_RE.fullmatch(line) for line in lines):
+        _heartbeat_wake_sessions.discard(key)
+        return "[SILENT]"
+    if any(_SILENT_LINE_RE.fullmatch(line) for line in lines):
+        _heartbeat_wake_sessions.discard(key)
+        logger.warning("agent-heartbeat: mixed [SILENT] response normalized to [SILENT] for %s", key)
+        return "[SILENT]"
+    _heartbeat_wake_sessions.discard(key)
+    return text
 
 
 # ── slash commands ─────────────────────────────────────────────────────────────
@@ -1677,6 +1739,8 @@ def register(ctx) -> None:
     # on_session_end fires at each turn finalization (agent done replying).
     # Kept as a lightweight observer; the heartbeat loop does NOT depend on it.
     ctx.register_hook("on_session_end", _on_session_end)
+    ctx.register_hook("transform_llm_output", _on_transform_llm_output)
+
     # Primary interception is the pre_gateway_dispatch hook (see
     # _on_pre_gateway_dispatch), which fires before built-in dispatch and
     # sends the reply itself. /heartbeat and /hb are taken over there (Hermes

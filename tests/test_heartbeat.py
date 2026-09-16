@@ -1,5 +1,6 @@
 """Tests for the agent-heartbeat plugin (multi-session version)."""
 
+import asyncio
 import importlib.util
 import json
 import os
@@ -339,21 +340,48 @@ class TestPrompt:
         prompt = mod._prompt({})
         assert "[Heartbeat 唤醒]" in prompt
         assert "[SILENT]" in prompt
-        assert "必须严格只输出 [SILENT]" in prompt
-        assert "默认不要发送最终总结" in prompt
+        assert "默认不要发送最终总结" not in prompt
+        assert "完成了任何实际工作" in prompt
         assert "只适用于自动 Heartbeat 唤醒" in prompt
 
     def test_default_prompt_can_be_english_with_silent_policy(self):
         mod = _load_plugin()
         prompt = mod._prompt({"language": "en"})
         assert "[Heartbeat Wakeup]" in prompt
-        assert "MUST be exactly [SILENT]" in prompt
-        assert "By default, do not send a final summary" in prompt
+        assert "MUST be exactly [SILENT]" not in prompt
+        assert "you MUST send a brief summary" in prompt
         assert "only to automatic Heartbeat wakeups" in prompt
 
     def test_custom_prompt_is_preserved(self):
         mod = _load_plugin()
         assert mod._prompt({"prompt": "Custom prompt"}) == "Custom prompt"
+
+    def test_manual_trigger_returns_no_ack(self):
+        mod = _load_plugin()
+        key = "telegram:123:"
+        task = types.SimpleNamespace(done=lambda: False)
+        mod._tasks[key] = task
+        event = asyncio.Event()
+        mod._triggers[key] = event
+        class FakeSource:
+            platform = mod.Platform.TELEGRAM
+            chat_id = "123"
+            thread_id = None
+        mod._last_source = FakeSource()
+        try:
+            assert mod._cmd_xt("") == mod._t("zh", "triggered", source=mod._format_source(key))
+            assert event.is_set()
+        finally:
+            mod._tasks.pop(key, None)
+            mod._triggers.pop(key, None)
+
+    def test_transform_llm_output_enforces_automatic_silence_only(self):
+        mod = _load_plugin()
+        mod._heartbeat_wake_sessions.add("auto-session")
+        assert mod._on_transform_llm_output("[SILENT]", session_id="auto-session") == "[SILENT]"
+        mod._heartbeat_wake_sessions.add("auto-session")
+        assert mod._on_transform_llm_output("summary\n[SILENT]", session_id="auto-session") == "[SILENT]"
+        assert mod._on_transform_llm_output("[SILENT]", session_id="user-session") is None
 
     def test_language_normalization_defaults_to_chinese(self):
         mod = _load_plugin()
@@ -391,9 +419,11 @@ class TestFormatSource:
 class TestCmdHeartbeat:
     def test_multiline_batch_extracts_xt_command(self):
         mod = _load_plugin()
-        assert mod.__dict__["_extract_xt_command"]("重启了\n/xt stats") == "stats"
+        assert mod.__dict__["_extract_xt_command"]("重启了\n/xt stats") is None
         assert mod.__dict__["_extract_xt_command"]("/xt@bot test") == "test"
         assert mod.__dict__["_extract_xt_command"]("请处理 /xt stats") is None
+        assert mod.__dict__["_extract_xt_command"]("/xt stats 其他内容") is None
+        assert mod.__dict__["_extract_xt_command"]("/xt stats") == "stats"
 
     def test_xt_command_rebinds_configured_session_after_restart(self):
         mod = _load_plugin()
@@ -571,7 +601,8 @@ class TestRegister:
         mod.register(ctx)
 
         assert [name for name, _ in ctx.hooks] == [
-            "pre_gateway_dispatch", "on_session_finalize", "on_session_reset", "on_session_end"
+            "pre_gateway_dispatch", "on_session_finalize", "on_session_reset", "on_session_end",
+            "transform_llm_output",
         ]
         assert len(ctx.commands) == 1  # /xt registered as a normal command
         assert ctx.commands[0][0] == "xt"
