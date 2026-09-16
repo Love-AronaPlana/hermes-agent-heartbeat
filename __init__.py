@@ -94,6 +94,23 @@ _XT_CONFIG_KEY_ALIASES = {
 }
 
 
+def _extract_xt_command(text: str) -> str | None:
+    """Return the args of a standalone ``/xt`` line in a Telegram text batch.
+
+    Telegram's adapter may merge messages received in one short burst with a
+    newline.  A command must still win over the preceding ordinary text, but
+    ``/xt`` embedded in a normal sentence must not be treated as a command.
+    """
+    for line in (text or "").splitlines():
+        parts = line.strip().split(None, 1)
+        if not parts:
+            continue
+        command = parts[0].split("@", 1)[0].lower()
+        if command == "/xt":
+            return parts[1].strip() if len(parts) > 1 else ""
+    return None
+
+
 def _normalize_xt_args(raw_args: str) -> str:
     """Normalize Chinese command/key aliases to the canonical English syntax."""
     args = (raw_args or "").strip()
@@ -1005,10 +1022,9 @@ def _on_pre_gateway_dispatch(event: Any, gateway: Any, **_: Any) -> dict | None:
     # Hermes core owns /heartbeat and /hb. The plugin deliberately does not
     # shadow either built-in name. /xt is the sole plugin command.
     text = (getattr(event, "text", "") or "").strip()
-    command_text, _, remainder = text.partition(" ")
-    if command_text.split("@", 1)[0].lower() == "/xt":
-        remainder = remainder.strip()
-        response_text = _cmd_xt(remainder)
+    xt_args = _extract_xt_command(text)
+    if xt_args is not None:
+        response_text = _cmd_xt(xt_args)
         if response_text:
             # Send reply via adapter, then skip built-in dispatch.
             # adapter.send is async — schedule it on the running event loop

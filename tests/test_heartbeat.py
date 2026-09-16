@@ -387,6 +387,12 @@ class TestFormatSource:
 
 
 class TestCmdHeartbeat:
+    def test_multiline_batch_extracts_xt_command(self):
+        mod = _load_plugin()
+        assert mod.__dict__["_extract_xt_command"]("重启了\n/xt stats") == "stats"
+        assert mod.__dict__["_extract_xt_command"]("/xt@bot test") == "test"
+        assert mod.__dict__["_extract_xt_command"]("请处理 /xt stats") is None
+
     def test_chinese_interval_alias_normalizes_to_config(self):
         mod = _load_plugin()
         assert mod._normalize_xt_args("间隔 1800") == "config interval 1800"
