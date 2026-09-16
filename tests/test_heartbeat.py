@@ -350,8 +350,9 @@ class TestPrompt:
         assert "[Heartbeat 执行指令]" in prompt
         assert "[SILENT]" in prompt
         assert "不要回复‘这是提示词’" in prompt
+        assert "读取并复用当前上下文中最近的完成记录" in prompt
         assert "上网搜索和学习资料" in prompt
-        assert "完成实际工作后" in prompt
+        assert "新工作不得是最近已完成工作的原样重做" in prompt
 
     def test_default_prompt_can_be_english_with_silent_policy(self):
         mod = _load_plugin()
@@ -359,8 +360,9 @@ class TestPrompt:
         assert "[Heartbeat Execution Directive]" in prompt
         assert "MUST be exactly [SILENT]" not in prompt
         assert "Do not reply with ‘this is the prompt’" in prompt
+        assert "Read and reuse the most recent completion records" in prompt
         assert "search the web and learn from useful sources" in prompt
-        assert "After doing actual work" in prompt
+        assert "New work must not be an unchanged rerun" in prompt
 
     def test_custom_prompt_is_preserved(self):
         mod = _load_plugin()
