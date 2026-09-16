@@ -378,6 +378,11 @@ class TestFormatSource:
 
 
 class TestCmdHeartbeat:
+    def test_chinese_interval_alias_normalizes_to_config(self):
+        mod = _load_plugin()
+        assert mod._normalize_xt_args("间隔 1800") == "config interval 1800"
+        assert mod._normalize_xt_args("config 间隔 1800") == "config interval 1800"
+
     def test_no_subcommand_no_active(self):
         mod = _load_plugin()
         result = mod._cmd_xt("")

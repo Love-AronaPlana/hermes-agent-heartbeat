@@ -68,6 +68,53 @@ _LANGUAGE_ALIASES = {
     "en": "en", "en-us": "en", "英文": "en", "english": "en",
 }
 
+# Chinese aliases are normalized before dispatch so the existing command
+# implementation remains the single source of truth.  In particular, users
+# naturally type `/xt 间隔 1800`, which is shorthand for
+# `/xt config interval 1800`.
+_XT_SUBCOMMAND_ALIASES = {
+    "列表": "list", "列出": "list",
+    "设置": "set", "启用": "set", "开启": "set",
+    "停用": "unset", "关闭": "unset",
+    "配置": "config", "设置配置": "config",
+    "统计": "stats", "测试": "test",
+    "暂停": "pause", "恢复": "resume",
+    "语言": "language", "间隔": "interval", "频率": "interval",
+}
+_XT_CONFIG_KEY_ALIASES = {
+    "启用": "enabled", "开启": "enabled",
+    "间隔": "interval", "频率": "interval",
+    "提示词": "prompt", "提示": "prompt",
+    "提示文件": "prompt_file", "提示词文件": "prompt_file",
+    "提示文件列表": "prompt_files", "提示词文件列表": "prompt_files",
+    "活跃开始": "active_start", "活跃结束": "active_end",
+    "语言": "language", "时区": "utc_offset", "utc偏移": "utc_offset",
+    "空闲自动暂停": "idle_auto_pause_enabled", "空闲暂停": "idle_auto_pause_enabled",
+    "空闲阈值": "idle_auto_pause_minutes",
+}
+
+
+def _normalize_xt_args(raw_args: str) -> str:
+    """Normalize Chinese command/key aliases to the canonical English syntax."""
+    args = (raw_args or "").strip()
+    if not args:
+        return ""
+
+    parts = args.split(None, 1)
+    subcmd = _XT_SUBCOMMAND_ALIASES.get(parts[0].lower(), parts[0].lower())
+    rest = parts[1].strip() if len(parts) > 1 else ""
+
+    # `/xt 间隔 1800` and `/xt 频率 1800` are convenient config shortcuts.
+    if subcmd == "interval":
+        return f"config interval {rest}".strip()
+
+    if subcmd == "config" and rest:
+        key_parts = rest.split(None, 1)
+        key = _XT_CONFIG_KEY_ALIASES.get(key_parts[0].lower(), key_parts[0])
+        rest = key + (f" {key_parts[1]}" if len(key_parts) > 1 else "")
+
+    return subcmd + (f" {rest}" if rest else "")
+
 _TEXT = {
     "no_context": ("❌ 没有会话上下文，请先发送一条消息。", "❌ No session context. Send a message first."),
     "triggered": ("✅ 已触发当前会话的 Heartbeat：{source}", "✅ Heartbeat triggered for {source}"),
@@ -1064,7 +1111,7 @@ def _language_label(language: str) -> str:
 
 
 def _cmd_xt(raw_args: str) -> str | None:
-    args = raw_args.strip()
+    args = _normalize_xt_args(raw_args)
 
     # ── /xt (no subcommand) — manual trigger for CURRENT session ──
     language = _current_language()
