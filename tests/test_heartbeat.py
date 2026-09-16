@@ -347,19 +347,20 @@ class TestPrompt:
     def test_empty_prompt_uses_default_chinese_with_silent_policy(self):
         mod = _load_plugin()
         prompt = mod._prompt({})
-        assert "[Heartbeat 唤醒]" in prompt
+        assert "[Heartbeat 执行指令]" in prompt
         assert "[SILENT]" in prompt
-        assert "默认不要发送最终总结" not in prompt
-        assert "完成了任何实际工作后" in prompt
-        assert "自动 Heartbeat 唤醒和 /xt 的立即触发" in prompt
+        assert "不要回复‘这是提示词’" in prompt
+        assert "上网搜索和学习资料" in prompt
+        assert "完成实际工作后" in prompt
 
     def test_default_prompt_can_be_english_with_silent_policy(self):
         mod = _load_plugin()
         prompt = mod._prompt({"language": "en"})
-        assert "[Heartbeat Wakeup]" in prompt
+        assert "[Heartbeat Execution Directive]" in prompt
         assert "MUST be exactly [SILENT]" not in prompt
-        assert "After you do any actual work" in prompt
-        assert "only to automatic Heartbeat wakeups" in prompt
+        assert "Do not reply with ‘this is the prompt’" in prompt
+        assert "search the web and learn from useful sources" in prompt
+        assert "After doing actual work" in prompt
 
     def test_custom_prompt_is_preserved(self):
         mod = _load_plugin()
