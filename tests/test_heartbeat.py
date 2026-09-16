@@ -412,7 +412,7 @@ class TestCmdHeartbeat:
             assert mod.__dict__["_is_session_active"](key) is False
             mod.__dict__["_save_sessions"]({key: {"enabled": True}})
             assert mod.__dict__["_is_session_active"](key) is True
-            mod.__dict__["_save_sessions"]({key: {"enabled": False}})
+            mod.__dict__["_save_sessions"]({"_version": mod.__dict__["_SESSIONS_FORMAT_VERSION"]})
             assert mod.__dict__["_is_session_active"](key) is False
 
     def test_set_no_context(self):

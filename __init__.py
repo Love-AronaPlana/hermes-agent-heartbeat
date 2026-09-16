@@ -1036,6 +1036,12 @@ def _on_pre_gateway_dispatch(event: Any, gateway: Any, **_: Any) -> dict | None:
     key = _session_key(source)
 
     # Only track user-initiated messages for idle detection
+    # Check configuration before recording or binding ordinary messages.
+    # Commands are intercepted above; unconfigured chats must remain entirely
+    # invisible to Heartbeat and must never start a loop after restart.
+    if not _is_session_active(key):
+        return
+
     if _is_user_message(event):
         message_ts = datetime.now().timestamp()
         _last_user_message[key] = message_ts
@@ -1048,10 +1054,6 @@ def _on_pre_gateway_dispatch(event: Any, gateway: Any, **_: Any) -> dict | None:
         # immediately after a message arrives.
         if key in _tasks and not _tasks[key].done():
             _set_next_trigger(key, message_ts + _interval(_get_session_config(key)))
-
-    # Check if this session is configured and enabled
-    if not _is_session_active(key):
-        return
 
     # Start the loop if not already running — uses the shared helper that
     # always refreshes _sources[key] first.
