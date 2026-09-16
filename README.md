@@ -34,7 +34,7 @@ It periodically wakes up the agent **in the same conversation**, preserving full
 | ✅ | **Multi-prompt rotation** — array of prompt files, picked randomly each cycle | — |
 | ✅ | **Jitter** — random interval offset (±10% etc.) to avoid predictable beats | `0%` |
 | ✅ | **Persistent stats** — wakeup/skip counts survive gateway restarts | — |
-| ✅ | **`[SILENT]`** — return this in the prompt to skip this cycle silently | — |
+| ✅ | **`[SILENT]`** — built-in prompt tells the agent to return exactly this when there is no meaningful progress or user-facing update; the gateway suppresses that final reply | — |
 | ✅ | **Hot-reload config** — change interval/prompt without restarting gateway | — |
 | ✅ | **Structured logging** — every wakeup is logged in `gateway.log` | — |
 | ✅ | **Graceful shutdown** — all heartbeat tasks cancelled on session end | — |
@@ -293,6 +293,10 @@ View wakeup statistics:
 
 /xt stats clear    # Reset counters
 ```
+
+### Silent automatic wakeups
+
+The built-in Chinese and English prompts tell the agent to return exactly `[SILENT]` when an automatic wakeup produces no meaningful progress, new information, or user-facing item. Hermes recognizes this marker and suppresses the final chat message. Custom prompts are left unchanged, so add the same instruction yourself if you want silent behavior with a custom prompt.
 
 ### Test (dry-run)
 

@@ -85,7 +85,7 @@ class TestPluginImports:
         assert mod._MAX_INTERVAL == 86400.0
         assert mod._DEFAULT_INTERVAL == 900.0
         assert mod._DEFAULT_JITTER == 0.0
-        assert mod._SESSIONS_FORMAT_VERSION == "0.5.0"
+        assert mod._SESSIONS_FORMAT_VERSION == "0.5.1"
 
 
 class TestSessionKey:
@@ -325,13 +325,24 @@ class TestPrompt:
         result = mod._prompt({"prompt": "Hello heartbeat"})
         assert result == "Hello heartbeat"
 
-    def test_empty_prompt_uses_default_chinese(self):
+    def test_empty_prompt_uses_default_chinese_with_silent_policy(self):
         mod = _load_plugin()
-        assert "[Heartbeat 唤醒]" in mod._prompt({})
+        prompt = mod._prompt({})
+        assert "[Heartbeat 唤醒]" in prompt
+        assert "[SILENT]" in prompt
+        assert "必须严格只输出 [SILENT]" in prompt
+        assert "只适用于自动 Heartbeat 唤醒" in prompt
 
-    def test_default_prompt_can_be_english(self):
+    def test_default_prompt_can_be_english_with_silent_policy(self):
         mod = _load_plugin()
-        assert "[Heartbeat Wakeup]" in mod._prompt({"language": "en"})
+        prompt = mod._prompt({"language": "en"})
+        assert "[Heartbeat Wakeup]" in prompt
+        assert "MUST be exactly [SILENT]" in prompt
+        assert "only to automatic Heartbeat wakeups" in prompt
+
+    def test_custom_prompt_is_preserved(self):
+        mod = _load_plugin()
+        assert mod._prompt({"prompt": "Custom prompt"}) == "Custom prompt"
 
     def test_language_normalization_defaults_to_chinese(self):
         mod = _load_plugin()
